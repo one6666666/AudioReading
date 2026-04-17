@@ -33,9 +33,9 @@ function clamp(value, min, max) {
 function resolveSpeechSettings(settings) {
   const overrides = settings.overrides || {};
 
-  const rate = clamp((settings.rate || 1) * (overrides.rateMultiplier || 1), 0.5, 2);
-  const pitch = clamp((settings.pitch || 1) + (overrides.pitchOffset || 0), 0, 2);
-  const volume = clamp((settings.volume || 1) * (overrides.volumeMultiplier || 1), 0, 1);
+  const rate = clamp((settings.rate ?? 1) * (overrides.rateMultiplier ?? 1), 0.5, 2);
+  const pitch = clamp((settings.pitch ?? 1) + (overrides.pitchOffset ?? 0), 0, 2);
+  const volume = clamp((settings.volume ?? 1) * (overrides.volumeMultiplier ?? 1), 0, 1);
 
   return {
     rate,
