@@ -12,6 +12,16 @@ const voiceOptionMap = new Map();
 
 const CHINESE_VARIANTS = [
   {
+    key: 'expressive_female',
+    label: '情感女声（推荐）',
+    rateMultiplier: 0.96,
+    pitchOffset: 0.24,
+    volumeMultiplier: 1,
+    prosodyStyle: 'expressive',
+    emotionIntensity: 0.9,
+    keywords: ['xiaoxiao', 'xiaoyi', 'female', 'woman', '女']
+  },
+  {
     key: 'warm_female',
     label: '温柔女声',
     rateMultiplier: 0.9,
@@ -104,7 +114,9 @@ function buildVoiceOptions(voices) {
         overrides: {
           rateMultiplier: variant.rateMultiplier,
           pitchOffset: variant.pitchOffset,
-          volumeMultiplier: variant.volumeMultiplier
+          volumeMultiplier: variant.volumeMultiplier,
+          prosodyStyle: variant.prosodyStyle || 'standard',
+          emotionIntensity: variant.emotionIntensity || 0
         }
       });
     }
