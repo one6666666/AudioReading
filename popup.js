@@ -2,10 +2,14 @@ const voiceSelect = document.getElementById('voiceSelect');
 const rateInput = document.getElementById('rate');
 const pitchInput = document.getElementById('pitch');
 const volumeInput = document.getElementById('volume');
+const emotionInput = document.getElementById('emotion');
+const readingStyleSelect = document.getElementById('readingStyle');
 const rateValue = document.getElementById('rateValue');
 const pitchValue = document.getElementById('pitchValue');
 const volumeValue = document.getElementById('volumeValue');
+const emotionValue = document.getElementById('emotionValue');
 const statusEl = document.getElementById('status');
+const opensourceListEl = document.getElementById('opensourceList');
 
 const SETTINGS_KEY = 'ttsSettings';
 const voiceOptionMap = new Map();
@@ -52,6 +56,34 @@ const CHINESE_VARIANTS = [
     pitchOffset: -0.2,
     volumeMultiplier: 1,
     keywords: ['yunyang', 'yunhao', 'male', 'man', '男']
+  }
+];
+
+const OPEN_SOURCE_VOICE_PACKS = [
+  {
+    name: 'GPT-SoVITS',
+    note: '中文克隆与情感迁移社区活跃，适合做高表现力中文音色',
+    url: 'https://github.com/RVC-Boss/GPT-SoVITS'
+  },
+  {
+    name: 'CosyVoice',
+    note: '阿里开源，中文自然度较高，支持跨语言与零样本语音',
+    url: 'https://github.com/FunAudioLLM/CosyVoice'
+  },
+  {
+    name: 'Fish-Speech',
+    note: '社区常用于中文高拟真 TTS，可做多说话人和风格控制',
+    url: 'https://github.com/fishaudio/fish-speech'
+  },
+  {
+    name: 'OpenVoice',
+    note: '音色转换和语种适配成熟，适合做个性化中文音色',
+    url: 'https://github.com/myshell-ai/OpenVoice'
+  },
+  {
+    name: 'Bert-VITS2',
+    note: '中文生态完善，适合自训角色音色和情感风格',
+    url: 'https://github.com/fishaudio/Bert-VITS2'
   }
 ];
 
@@ -137,9 +169,12 @@ async function loadSettings() {
   rateInput.value = saved.rate ?? '1';
   pitchInput.value = saved.pitch ?? '1';
   volumeInput.value = saved.volume ?? '1';
+  emotionInput.value = saved.emotion ?? '0.8';
+  readingStyleSelect.value = saved.readingStyle || 'standard';
   rateValue.textContent = Number(rateInput.value).toFixed(1);
   pitchValue.textContent = Number(pitchInput.value).toFixed(1);
   volumeValue.textContent = Number(volumeInput.value).toFixed(1);
+  emotionValue.textContent = Number(emotionInput.value).toFixed(1);
 }
 
 async function persistSettings() {
@@ -148,7 +183,9 @@ async function persistSettings() {
     voiceURI: voiceOptionMap.get(voiceSelect.value)?.voiceURI || voiceSelect.value,
     rate: Number(rateInput.value),
     pitch: Number(pitchInput.value),
-    volume: Number(volumeInput.value)
+    volume: Number(volumeInput.value),
+    emotion: Number(emotionInput.value),
+    readingStyle: readingStyleSelect.value
   };
   await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
 }
@@ -203,6 +240,23 @@ function wireRange(input, label) {
   });
 }
 
+function renderOpenSourcePacks() {
+  if (!opensourceListEl) return;
+
+  opensourceListEl.innerHTML = '';
+  for (const pack of OPEN_SOURCE_VOICE_PACKS) {
+    const li = document.createElement('li');
+    const link = document.createElement('a');
+    link.href = pack.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.textContent = pack.name;
+    li.appendChild(link);
+    li.append(`：${pack.note}`);
+    opensourceListEl.appendChild(li);
+  }
+}
+
 async function onRead() {
   try {
     const tab = await getCurrentTab();
@@ -218,7 +272,9 @@ async function onRead() {
         overrides: selectedOption?.overrides || null,
         rate: Number(rateInput.value),
         pitch: Number(pitchInput.value),
-        volume: Number(volumeInput.value)
+        volume: Number(volumeInput.value),
+        emotion: Number(emotionInput.value),
+        readingStyle: readingStyleSelect.value
       }
     });
 
@@ -298,8 +354,11 @@ async function init() {
   wireRange(rateInput, rateValue);
   wireRange(pitchInput, pitchValue);
   wireRange(volumeInput, volumeValue);
+  wireRange(emotionInput, emotionValue);
+  renderOpenSourcePacks();
 
   voiceSelect.addEventListener('change', persistSettings);
+  readingStyleSelect.addEventListener('change', persistSettings);
   document.getElementById('readBtn').addEventListener('click', onRead);
   document.getElementById('pauseBtn').addEventListener('click', onPauseResume);
   document.getElementById('stopBtn').addEventListener('click', onStop);
