@@ -26,6 +26,24 @@ function findVoiceByURI(voiceURI) {
   return speechSynthesis.getVoices().find((v) => v.voiceURI === voiceURI) || null;
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function resolveSpeechSettings(settings) {
+  const overrides = settings.overrides || {};
+
+  const rate = clamp((settings.rate || 1) * (overrides.rateMultiplier || 1), 0.5, 2);
+  const pitch = clamp((settings.pitch || 1) + (overrides.pitchOffset || 0), 0, 2);
+  const volume = clamp((settings.volume || 1) * (overrides.volumeMultiplier || 1), 0, 1);
+
+  return {
+    rate,
+    pitch,
+    volume
+  };
+}
+
 function stopAll() {
   currentQueue = [];
   speaking = false;
@@ -45,9 +63,10 @@ function speakQueue(settings) {
   const voice = findVoiceByURI(settings.voiceURI);
   if (voice) utterance.voice = voice;
 
-  utterance.rate = settings.rate;
-  utterance.pitch = settings.pitch;
-  utterance.volume = settings.volume;
+  const merged = resolveSpeechSettings(settings);
+  utterance.rate = merged.rate;
+  utterance.pitch = merged.pitch;
+  utterance.volume = merged.volume;
 
   utterance.onend = () => {
     if (paused) return;
