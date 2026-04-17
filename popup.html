@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>网页朗读助手</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>网页朗读助手</h1>
+
+    <label class="field">
+      <span>声音</span>
+      <select id="voiceSelect"></select>
+    </label>
+
+    <label class="field">
+      <span>语速 <strong id="rateValue">1.0</strong></span>
+      <input id="rate" type="range" min="0.5" max="2" step="0.1" value="1" />
+    </label>
+
+    <label class="field">
+      <span>音调 <strong id="pitchValue">1.0</strong></span>
+      <input id="pitch" type="range" min="0" max="2" step="0.1" value="1" />
+    </label>
+
+    <label class="field">
+      <span>音量 <strong id="volumeValue">1.0</strong></span>
+      <input id="volume" type="range" min="0" max="1" step="0.1" value="1" />
+    </label>
+
+    <div class="actions">
+      <button id="readBtn">开始朗读</button>
+      <button id="pauseBtn" class="secondary">暂停/继续</button>
+      <button id="stopBtn" class="danger">停止</button>
+    </div>
+
+    <p id="status" class="status">准备就绪</p>
+  </main>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "网页朗读助手",
+  "description": "朗读当前网页文字，支持切换多种语音、语速、音调与音量。",
+  "version": "1.0.0",
+  "permissions": ["activeTab", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "action": {
+    "default_title": "网页朗读助手",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
