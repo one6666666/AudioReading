@@ -70,10 +70,27 @@ function clamp(value, min, max) {
 
 function resolveSpeechSettings(settings) {
   const overrides = settings.overrides || {};
+  const style = settings.readingStyle || 'standard';
+  const styleMap = {
+    standard: { rateMultiplier: 1, pitchOffset: 0, volumeMultiplier: 1 },
+    story: { rateMultiplier: 0.96, pitchOffset: 0.08, volumeMultiplier: 1 },
+    dialogue: { rateMultiplier: 1, pitchOffset: 0.12, volumeMultiplier: 1 },
+    news: { rateMultiplier: 0.98, pitchOffset: -0.05, volumeMultiplier: 1 },
+    calm: { rateMultiplier: 0.88, pitchOffset: -0.08, volumeMultiplier: 0.95 }
+  };
+  const stylePreset = styleMap[style] || styleMap.standard;
 
-  const rate = clamp((settings.rate || 1) * (overrides.rateMultiplier || 1), 0.5, 2);
-  const pitch = clamp((settings.pitch || 1) + (overrides.pitchOffset || 0), 0, 2);
-  const volume = clamp((settings.volume || 1) * (overrides.volumeMultiplier || 1), 0, 1);
+  const rate = clamp(
+    (settings.rate || 1) * (overrides.rateMultiplier || 1) * (stylePreset.rateMultiplier || 1),
+    0.5,
+    2
+  );
+  const pitch = clamp((settings.pitch || 1) + (overrides.pitchOffset || 0) + (stylePreset.pitchOffset || 0), 0, 2);
+  const volume = clamp(
+    (settings.volume || 1) * (overrides.volumeMultiplier || 1) * (stylePreset.volumeMultiplier || 1),
+    0,
+    1
+  );
 
   return {
     rate,
@@ -84,10 +101,12 @@ function resolveSpeechSettings(settings) {
 
 function getProsodyAdjustments(text, settings) {
   const overrides = settings.overrides || {};
-  const style = overrides.prosodyStyle || 'standard';
-  const intensity = clamp(Number(overrides.emotionIntensity || 0), 0, 1);
+  const style = settings.readingStyle || overrides.prosodyStyle || 'standard';
+  const voiceIntensity = clamp(Number(overrides.emotionIntensity || 0), 0, 1);
+  const userIntensity = clamp(Number(settings.emotion ?? 0.8), 0, 1);
+  const intensity = clamp((voiceIntensity || 0.65) * userIntensity, 0, 1);
 
-  if (style !== 'expressive' || intensity <= 0) {
+  if (intensity <= 0) {
     return { rateDelta: 0, pitchDelta: 0, volumeDelta: 0 };
   }
 
@@ -124,6 +143,39 @@ function getProsodyAdjustments(text, settings) {
   if (/(请|拜托|谢谢|麻烦|劳驾)/u.test(chunk)) {
     rateDelta -= 0.02 * intensity;
     pitchDelta += 0.03 * intensity;
+  }
+
+  if (/(真的|太|非常|超级|特别|一定|绝对)/u.test(chunk)) {
+    rateDelta += 0.01 * intensity;
+    pitchDelta += 0.05 * intensity;
+  }
+
+  if (/(嗯|啊|呀|吧|呢|啦|嘛|哇)/u.test(chunk)) {
+    pitchDelta += 0.03 * intensity;
+  }
+
+  if (/["“”「」『』]/u.test(chunk)) {
+    pitchDelta += 0.04 * intensity;
+    rateDelta += 0.02 * intensity;
+  }
+
+  if (style === 'news') {
+    rateDelta -= 0.02 * intensity;
+    pitchDelta -= 0.05 * intensity;
+    volumeDelta += 0.01 * intensity;
+  } else if (style === 'story') {
+    pitchDelta += 0.04 * intensity;
+  } else if (style === 'dialogue') {
+    rateDelta += 0.02 * intensity;
+    pitchDelta += 0.06 * intensity;
+  } else if (style === 'calm') {
+    rateDelta -= 0.07 * intensity;
+    pitchDelta -= 0.06 * intensity;
+    volumeDelta -= 0.04 * intensity;
+  } else if (style === 'standard' && overrides.prosodyStyle !== 'expressive') {
+    rateDelta *= 0.7;
+    pitchDelta *= 0.7;
+    volumeDelta *= 0.7;
   }
 
   return { rateDelta, pitchDelta, volumeDelta };
