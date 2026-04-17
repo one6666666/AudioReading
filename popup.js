@@ -14,16 +14,52 @@ function setStatus(message, isError = false) {
   statusEl.style.color = isError ? '#d64c4c' : '#4b5563';
 }
 
-async function getCurrentTabId() {
+async function getCurrentTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) {
     throw new Error('未找到当前标签页');
   }
-  return tab.id;
+  return tab;
 }
 
-function sendMessage(tabId, payload) {
-  return chrome.tabs.sendMessage(tabId, payload);
+function isInjectableUrl(url = '') {
+  return /^https?:\/\//.test(url);
+}
+
+async function injectContentScript(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['content.js']
+  });
+}
+
+function shouldRetryWithInjection(error) {
+  const message = String(error?.message || error || '');
+  return message.includes('Receiving end does not exist');
+}
+
+function formatMessagingError(error, tab) {
+  if (shouldRetryWithInjection(error) && !isInjectableUrl(tab.url)) {
+    return '当前页面不支持朗读（例如 chrome://、扩展页、新标签页或 PDF 预览）。请切换到普通网页后重试。';
+  }
+  return error?.message || String(error);
+}
+
+async function sendMessage(tab, payload) {
+  try {
+    return await chrome.tabs.sendMessage(tab.id, payload);
+  } catch (error) {
+    if (!shouldRetryWithInjection(error)) {
+      throw error;
+    }
+
+    if (!isInjectableUrl(tab.url)) {
+      throw error;
+    }
+
+    await injectContentScript(tab.id);
+    return chrome.tabs.sendMessage(tab.id, payload);
+  }
 }
 
 async function loadSettings() {
@@ -50,8 +86,8 @@ async function persistSettings() {
 
 async function loadVoices() {
   try {
-    const tabId = await getCurrentTabId();
-    const response = await sendMessage(tabId, { type: 'GET_VOICES' });
+    const tab = await getCurrentTab();
+    const response = await sendMessage(tab, { type: 'GET_VOICES' });
     const voices = response?.voices ?? [];
 
     voiceSelect.innerHTML = '';
@@ -78,7 +114,8 @@ async function loadVoices() {
 
     setStatus(`已加载 ${voices.length} 个声音`);
   } catch (error) {
-    setStatus(`加载声音失败：${error.message}`, true);
+    const tab = await getCurrentTab().catch(() => ({ url: '' }));
+    setStatus(`加载声音失败：${formatMessagingError(error, tab)}`, true);
   }
 }
 
@@ -91,10 +128,10 @@ function wireRange(input, label) {
 
 async function onRead() {
   try {
-    const tabId = await getCurrentTabId();
+    const tab = await getCurrentTab();
     await persistSettings();
 
-    const result = await sendMessage(tabId, {
+    const result = await sendMessage(tab, {
       type: 'READ_PAGE',
       payload: {
         voiceURI: voiceSelect.value,
@@ -110,27 +147,30 @@ async function onRead() {
       setStatus(result?.message || '朗读失败', true);
     }
   } catch (error) {
-    setStatus(`朗读失败：${error.message}`, true);
+    const tab = await getCurrentTab().catch(() => ({ url: '' }));
+    setStatus(`朗读失败：${formatMessagingError(error, tab)}`, true);
   }
 }
 
 async function onPauseResume() {
   try {
-    const tabId = await getCurrentTabId();
-    const result = await sendMessage(tabId, { type: 'TOGGLE_PAUSE' });
+    const tab = await getCurrentTab();
+    const result = await sendMessage(tab, { type: 'TOGGLE_PAUSE' });
     setStatus(result?.message || '已切换状态');
   } catch (error) {
-    setStatus(`操作失败：${error.message}`, true);
+    const tab = await getCurrentTab().catch(() => ({ url: '' }));
+    setStatus(`操作失败：${formatMessagingError(error, tab)}`, true);
   }
 }
 
 async function onStop() {
   try {
-    const tabId = await getCurrentTabId();
-    const result = await sendMessage(tabId, { type: 'STOP_READING' });
+    const tab = await getCurrentTab();
+    const result = await sendMessage(tab, { type: 'STOP_READING' });
     setStatus(result?.message || '已停止');
   } catch (error) {
-    setStatus(`停止失败：${error.message}`, true);
+    const tab = await getCurrentTab().catch(() => ({ url: '' }));
+    setStatus(`停止失败：${formatMessagingError(error, tab)}`, true);
   }
 }
 

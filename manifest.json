@@ -3,7 +3,7 @@
   "name": "网页朗读助手",
   "description": "朗读当前网页文字，支持切换多种语音、语速、音调与音量。",
   "version": "1.0.0",
-  "permissions": ["activeTab", "storage"],
+  "permissions": ["activeTab", "storage", "scripting"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_title": "网页朗读助手",
