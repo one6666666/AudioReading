@@ -22,6 +22,44 @@ function splitText(text, size = 180) {
   return chunks;
 }
 
+function splitTextBySentence(text, maxChunkLength = 220) {
+  if (!text) return [];
+  const normalized = String(text).replace(/\s+/g, ' ').trim();
+  if (!normalized) return [];
+
+  const sentences = normalized
+    .split(/(?<=[。！？!?；;…\.])\s*/u)
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (!sentences.length) {
+    return splitText(normalized, maxChunkLength);
+  }
+
+  const chunks = [];
+  let buffer = '';
+  for (const sentence of sentences) {
+    if ((buffer + sentence).length <= maxChunkLength) {
+      buffer += sentence;
+      continue;
+    }
+
+    if (buffer) {
+      chunks.push(buffer);
+      buffer = '';
+    }
+
+    if (sentence.length > maxChunkLength) {
+      chunks.push(...splitText(sentence, maxChunkLength));
+    } else {
+      buffer = sentence;
+    }
+  }
+
+  if (buffer) chunks.push(buffer);
+  return chunks;
+}
+
 function findVoiceByURI(voiceURI) {
   return speechSynthesis.getVoices().find((v) => v.voiceURI === voiceURI) || null;
 }
@@ -44,6 +82,53 @@ function resolveSpeechSettings(settings) {
   };
 }
 
+function getProsodyAdjustments(text, settings) {
+  const overrides = settings.overrides || {};
+  const style = overrides.prosodyStyle || 'standard';
+  const intensity = clamp(Number(overrides.emotionIntensity || 0), 0, 1);
+
+  if (style !== 'expressive' || intensity <= 0) {
+    return { rateDelta: 0, pitchDelta: 0, volumeDelta: 0 };
+  }
+
+  const chunk = String(text || '');
+  let rateDelta = 0;
+  let pitchDelta = 0;
+  let volumeDelta = 0;
+
+  if (/[！？!?]/u.test(chunk)) {
+    rateDelta += 0.04 * intensity;
+    pitchDelta += 0.14 * intensity;
+    volumeDelta += 0.06 * intensity;
+  }
+
+  if (/[，、；;]/u.test(chunk)) {
+    rateDelta -= 0.03 * intensity;
+  }
+
+  if (/[。.…]/u.test(chunk)) {
+    rateDelta -= 0.02 * intensity;
+    pitchDelta -= 0.04 * intensity;
+  }
+
+  if (/(开心|高兴|喜欢|期待|激动|惊喜|太棒|真好)/u.test(chunk)) {
+    pitchDelta += 0.1 * intensity;
+    volumeDelta += 0.03 * intensity;
+  }
+
+  if (/(难过|抱歉|遗憾|悲伤|失望|担心|害怕|辛苦)/u.test(chunk)) {
+    rateDelta -= 0.05 * intensity;
+    pitchDelta -= 0.09 * intensity;
+  }
+
+  if (/(请|拜托|谢谢|麻烦|劳驾)/u.test(chunk)) {
+    rateDelta -= 0.02 * intensity;
+    pitchDelta += 0.03 * intensity;
+  }
+
+  return { rateDelta, pitchDelta, volumeDelta };
+}
+
 function stopAll() {
   currentQueue = [];
   speaking = false;
@@ -58,15 +143,16 @@ function speakQueue(settings) {
   }
 
   speaking = true;
-  const text = currentQueue.shift();
-  const utterance = new SpeechSynthesisUtterance(text);
+  const chunk = currentQueue.shift();
+  const utterance = new SpeechSynthesisUtterance(chunk);
   const voice = findVoiceByURI(settings.voiceURI);
   if (voice) utterance.voice = voice;
 
   const merged = resolveSpeechSettings(settings);
-  utterance.rate = merged.rate;
-  utterance.pitch = merged.pitch;
-  utterance.volume = merged.volume;
+  const prosody = getProsodyAdjustments(chunk, settings);
+  utterance.rate = clamp(merged.rate + prosody.rateDelta, 0.5, 2);
+  utterance.pitch = clamp(merged.pitch + prosody.pitchDelta, 0, 2);
+  utterance.volume = clamp(merged.volume + prosody.volumeDelta, 0, 1);
 
   utterance.onend = () => {
     if (paused) return;
@@ -104,7 +190,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
 
     stopAll();
-    currentQueue = splitText(text);
+    currentQueue = splitTextBySentence(text);
     paused = false;
     speakQueue(message.payload);
 
