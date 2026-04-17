@@ -1,0 +1,12 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "panels": [],
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["tts"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "title": "TTS Overview",
+  "version": 1
+}
