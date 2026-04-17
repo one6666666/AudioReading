@@ -1,0 +1,51 @@
+limit_req_zone $binary_remote_addr zone=tts_api_limit:10m rate=30r/s;
+limit_conn_zone $binary_remote_addr zone=tts_conn_limit:10m;
+
+upstream tts_backend {
+    server 127.0.0.1:8000;
+    keepalive 64;
+}
+
+server {
+    listen 80;
+    server_name tts.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name tts.example.com;
+
+    ssl_certificate /etc/nginx/ssl/fullchain.pem;
+    ssl_certificate_key /etc/nginx/ssl/privkey.pem;
+
+    client_max_body_size 1m;
+
+    location ~ ^/(healthz|readyz)$ {
+        proxy_pass http://tts_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_connect_timeout 2s;
+        proxy_read_timeout 5s;
+        access_log off;
+    }
+
+    location /api/tts/ {
+        limit_req zone=tts_api_limit burst=60 nodelay;
+        limit_conn tts_conn_limit 30;
+
+        proxy_pass http://tts_backend;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 60s;
+
+        proxy_next_upstream error timeout http_502 http_503 http_504;
+    }
+}

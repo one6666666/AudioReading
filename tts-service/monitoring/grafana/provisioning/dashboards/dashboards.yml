@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: "TTS Dashboards"
+    orgId: 1
+    folder: "TTS"
+    type: file
+    disableDeletion: false
+    editable: true
+    options:
+      path: /etc/grafana/provisioning/dashboards
