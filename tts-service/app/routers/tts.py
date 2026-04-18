@@ -3,9 +3,10 @@ import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.cache import TTLCache, build_cache_key
-from app.config import settings
+from app.config import get_config_issues, settings
 from app.deps import verify_api_key
 from app.metrics import CACHE_HIT_COUNT, FALLBACK_COUNT, REQUEST_COUNT, ObserveLatency
+from app.mock_tts import build_mock_audio_url
 from app.providers.router import ProviderRouter
 from app.rate_limit_redis import check_rate_limit
 from app.schemas import TTSRequest, TTSResponse
@@ -27,6 +28,11 @@ async def synthesize(req: TTSRequest, request: Request):
             CACHE_HIT_COUNT.inc()
             REQUEST_COUNT.labels(provider="cache", status="success").inc()
             return TTSResponse(provider="cache", cache_hit=True, audio_url=cached_url)
+
+        config_issues = get_config_issues()
+        if config_issues and settings.ENABLE_LOCAL_MOCK_TTS:
+            REQUEST_COUNT.labels(provider="mock", status="success").inc()
+            return TTSResponse(provider="mock", cache_hit=False, audio_url=build_mock_audio_url())
 
         audio, provider = await provider_router.synthesize(req)
         with ObserveLatency(provider=provider):

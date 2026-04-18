@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     INTERNAL_API_KEY: str = "change_me"
 
     # Aliyun
-    ALIYUN_API_KEY: str
-    ALIYUN_TTS_URL: str
+    ALIYUN_API_KEY: str = ""
+    ALIYUN_TTS_URL: str = ""
     ALIYUN_MODEL: str = "cosyvoice-v1"
     ALIYUN_TIMEOUT_SECONDS: int = 20
 
@@ -36,11 +36,14 @@ class Settings(BaseSettings):
     RATE_LIMIT_WINDOW_SECONDS: int = 60
 
     # OSS
-    OSS_ENDPOINT: str
-    OSS_ACCESS_KEY_ID: str
-    OSS_ACCESS_KEY_SECRET: str
-    OSS_BUCKET: str
-    OSS_PUBLIC_BASE_URL: str
+    OSS_ENDPOINT: str = ""
+    OSS_ACCESS_KEY_ID: str = ""
+    OSS_ACCESS_KEY_SECRET: str = ""
+    OSS_BUCKET: str = ""
+    OSS_PUBLIC_BASE_URL: str = ""
+
+    # Zero-config local fallback
+    ENABLE_LOCAL_MOCK_TTS: bool = True
 
     # Local URL cache
     CACHE_MAX_ITEMS: int = 5000
@@ -48,3 +51,45 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def get_config_issues() -> list[str]:
+    issues: list[str] = []
+
+    if settings.INTERNAL_API_KEY in {"", "change_me", "replace_with_strong_secret"}:
+        issues.append("INTERNAL_API_KEY 未配置为安全值")
+
+    if not settings.ALIYUN_API_KEY or settings.ALIYUN_API_KEY == "your_aliyun_api_key":
+        issues.append("ALIYUN_API_KEY 缺失")
+
+    if not settings.ALIYUN_TTS_URL:
+        issues.append("ALIYUN_TTS_URL 缺失")
+
+    if not settings.OSS_ENDPOINT:
+        issues.append("OSS_ENDPOINT 缺失")
+
+    if not settings.OSS_ACCESS_KEY_ID:
+        issues.append("OSS_ACCESS_KEY_ID 缺失")
+
+    if not settings.OSS_ACCESS_KEY_SECRET:
+        issues.append("OSS_ACCESS_KEY_SECRET 缺失")
+
+    if not settings.OSS_BUCKET or settings.OSS_BUCKET == "your_bucket_name":
+        issues.append("OSS_BUCKET 缺失")
+
+    if not settings.OSS_PUBLIC_BASE_URL or "your_bucket_name" in settings.OSS_PUBLIC_BASE_URL:
+        issues.append("OSS_PUBLIC_BASE_URL 缺失")
+
+    if settings.ENABLE_TENCENT_FALLBACK:
+        if not settings.TENCENT_SECRET_ID:
+            issues.append("ENABLE_TENCENT_FALLBACK=true 但 TENCENT_SECRET_ID 缺失")
+        if not settings.TENCENT_SECRET_KEY:
+            issues.append("ENABLE_TENCENT_FALLBACK=true 但 TENCENT_SECRET_KEY 缺失")
+
+    return issues
+
+
+def is_direct_usable() -> bool:
+    if settings.ENABLE_LOCAL_MOCK_TTS:
+        return True
+    return len(get_config_issues()) == 0

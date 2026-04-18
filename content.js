@@ -228,9 +228,45 @@ function getVoices() {
   }));
 }
 
+function waitForVoices(timeoutMs = 3000) {
+  const existing = getVoices();
+  if (existing.length) return Promise.resolve(existing);
+
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const finish = (voices) => {
+      if (settled) return;
+      settled = true;
+      speechSynthesis.removeEventListener('voiceschanged', onVoicesChanged);
+      clearTimeout(timer);
+      resolve(voices);
+    };
+
+    const onVoicesChanged = () => {
+      const voices = getVoices();
+      if (voices.length) {
+        finish(voices);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      finish(getVoices());
+    }, timeoutMs);
+
+    speechSynthesis.addEventListener('voiceschanged', onVoicesChanged);
+  });
+}
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === 'GET_VOICES') {
-    sendResponse({ voices: getVoices() });
+    waitForVoices()
+      .then((voices) => {
+        sendResponse({ voices });
+      })
+      .catch(() => {
+        sendResponse({ voices: getVoices() });
+      });
     return true;
   }
 

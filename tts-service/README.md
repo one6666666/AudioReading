@@ -16,7 +16,7 @@ Production-oriented TTS gateway with:
 cp .env.example .env
 ```
 
-2. Fill required secrets in `.env`.
+2. 可直接启动（默认开启 `ENABLE_LOCAL_MOCK_TTS=true`，零配置可用，返回 mock 音频）；若要接入真实云 TTS，再补齐 `.env` 里的云厂商与 OSS 密钥。
 
 3. Start service stack:
 
@@ -33,7 +33,7 @@ docker compose -f docker-compose.monitoring.yml up -d
 ## Endpoints
 
 - `GET /healthz`
-- `GET /readyz`
+- `GET /readyz`（返回 `direct_usable`、`mode` 与配置问题列表，可直接判断是否“开箱可用”）
 - `GET /metrics`
 - `POST /api/tts/synthesize`
 
