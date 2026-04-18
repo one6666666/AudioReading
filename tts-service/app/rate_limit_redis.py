@@ -1,6 +1,7 @@
 import time
 
 import redis.asyncio as redis
+from redis.exceptions import RedisError
 from fastapi import HTTPException, Request
 
 from app.config import settings
@@ -14,9 +15,13 @@ async def check_rate_limit(request: Request):
     slot = int(time.time() // window)
     key = f"rl:{ip}:{slot}"
 
-    count = await rds.incr(key)
-    if count == 1:
-        await rds.expire(key, window + 2)
+    try:
+        count = await rds.incr(key)
+        if count == 1:
+            await rds.expire(key, window + 2)
+    except RedisError:
+        # 零配置场景下允许无 Redis 启动；限流退化为关闭
+        return
 
     if count > settings.RATE_LIMIT_REQUESTS:
         raise HTTPException(status_code=429, detail="Too Many Requests")
