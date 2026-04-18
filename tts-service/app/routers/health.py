@@ -1,5 +1,7 @@
 from fastapi import APIRouter
 
+from app.config import get_config_issues
+
 router = APIRouter()
 
 
@@ -10,4 +12,5 @@ async def healthz():
 
 @router.get("/readyz")
 async def readyz():
-    return {"ready": True}
+    issues = get_config_issues()
+    return {"ready": len(issues) == 0, "direct_usable": len(issues) == 0, "issues": issues}

@@ -33,7 +33,7 @@ docker compose -f docker-compose.monitoring.yml up -d
 ## Endpoints
 
 - `GET /healthz`
-- `GET /readyz`
+- `GET /readyz`（返回 `direct_usable` 与配置问题列表，可直接判断是否“开箱可用”）
 - `GET /metrics`
 - `POST /api/tts/synthesize`
 
