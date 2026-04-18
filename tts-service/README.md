@@ -16,7 +16,7 @@ Production-oriented TTS gateway with:
 cp .env.example .env
 ```
 
-2. 可直接启动（默认开启 `ENABLE_LOCAL_MOCK_TTS=true`，零配置可用，返回 mock 音频）；若要接入真实云 TTS，再补齐 `.env` 里的云厂商与 OSS 密钥。
+2. 可直接启动（默认开启 `ENABLE_LOCAL_MOCK_TTS=true`，零配置可用，返回 mock 音频）；若要接入真实云 TTS，再补齐 `.env` 里的云厂商与 OSS 密钥。零配置模式下 Redis 不可达时会自动跳过限流。
 
 3. Start service stack:
 
