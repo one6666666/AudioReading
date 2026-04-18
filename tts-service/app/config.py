@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     INTERNAL_API_KEY: str = "change_me"
 
     # Aliyun
-    ALIYUN_API_KEY: str
-    ALIYUN_TTS_URL: str
+    ALIYUN_API_KEY: str = ""
+    ALIYUN_TTS_URL: str = ""
     ALIYUN_MODEL: str = "cosyvoice-v1"
     ALIYUN_TIMEOUT_SECONDS: int = 20
 
@@ -36,11 +36,14 @@ class Settings(BaseSettings):
     RATE_LIMIT_WINDOW_SECONDS: int = 60
 
     # OSS
-    OSS_ENDPOINT: str
-    OSS_ACCESS_KEY_ID: str
-    OSS_ACCESS_KEY_SECRET: str
-    OSS_BUCKET: str
-    OSS_PUBLIC_BASE_URL: str
+    OSS_ENDPOINT: str = ""
+    OSS_ACCESS_KEY_ID: str = ""
+    OSS_ACCESS_KEY_SECRET: str = ""
+    OSS_BUCKET: str = ""
+    OSS_PUBLIC_BASE_URL: str = ""
+
+    # Zero-config local fallback
+    ENABLE_LOCAL_MOCK_TTS: bool = True
 
     # Local URL cache
     CACHE_MAX_ITEMS: int = 5000
@@ -84,3 +87,9 @@ def get_config_issues() -> list[str]:
             issues.append("ENABLE_TENCENT_FALLBACK=true 但 TENCENT_SECRET_KEY 缺失")
 
     return issues
+
+
+def is_direct_usable() -> bool:
+    if settings.ENABLE_LOCAL_MOCK_TTS:
+        return True
+    return len(get_config_issues()) == 0
