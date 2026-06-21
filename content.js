@@ -236,53 +236,43 @@ function speakQueueWebSpeech(settings) {
   speechSynthesis.speak(utterance);
 }
 
-// ---- Edge TTS playback ----
-
-const EDGE_TTS_URL = 'https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4';
-
-function buildSSML(text, voiceName, rate, pitch) {
-  const ratePercent = Math.round((rate - 1) * 100);
-  const pitchPercent = Math.round((pitch - 1) * 100);
-  const lang = voiceName.split('-').slice(0, 2).join('-');
-
-  const escapedText = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-
-  return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="${lang}">
-  <voice name="${voiceName}">
-    <prosody rate="${ratePercent >= 0 ? '+' : ''}${ratePercent}%" pitch="${pitchPercent >= 0 ? '+' : ''}${pitchPercent}Hz">
-      ${escapedText}
-    </prosody>
-  </voice>
-</speak>`;
-}
+// ---- Edge TTS playback (via background service worker, bypasses CORS) ----
 
 async function synthesizeEdgeTTS(text, voiceName, rate, pitch) {
-  const ssml = buildSSML(text, voiceName, rate, pitch);
-
-  const response = await fetch(EDGE_TTS_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/ssml+xml',
-      'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
-    },
-    body: ssml
+  return new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage(
+      {
+        type: 'SYNTHESIZE_EDGE_TTS',
+        payload: { text, voiceName, rate, pitch }
+      },
+      (response) => {
+        if (chrome.runtime.lastError) {
+          reject(new Error(chrome.runtime.lastError.message));
+          return;
+        }
+        if (!response || !response.ok) {
+          reject(new Error(response?.message || 'Edge TTS synthesis failed'));
+          return;
+        }
+        resolve(response.audioData);
+      }
+    );
   });
-
-  if (!response.ok) {
-    throw new Error(`Edge TTS returned ${response.status}`);
-  }
-
-  return response.arrayBuffer();
 }
 
-function playAudioBuffer(arrayBuffer, onEnd, onError) {
-  const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
+function playAudioBuffer(data, onEnd, onError) {
+  let blob;
+  if (typeof data === 'string') {
+    // base64 → blob
+    const byteChars = atob(data);
+    const bytes = new Uint8Array(byteChars.length);
+    for (let i = 0; i < byteChars.length; i++) {
+      bytes[i] = byteChars.charCodeAt(i);
+    }
+    blob = new Blob([bytes], { type: 'audio/mpeg' });
+  } else {
+    blob = new Blob([data], { type: 'audio/mpeg' });
+  }
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
 
