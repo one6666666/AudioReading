@@ -8,55 +8,92 @@
 </head>
 <body>
   <main class="container">
-    <h1>网页朗读助手</h1>
+    <header class="header">
+      <h1>网页朗读助手</h1>
+      <span class="subtitle">多语音源 · 自然朗读</span>
+    </header>
 
-    <label class="field">
-      <span>声音</span>
-      <select id="voiceSelect"></select>
-    </label>
+    <!-- Voice Source Tabs -->
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="system">系统语音</button>
+      <button class="tab-btn" data-tab="edge">Edge 自然语音</button>
+      <button class="tab-btn" data-tab="cloud">云端语音</button>
+    </nav>
 
-    <label class="field">
-      <span>语速 <strong id="rateValue">1.0</strong></span>
-      <input id="rate" type="range" min="0.5" max="2" step="0.1" value="1" />
-    </label>
+    <!-- Favorites -->
+    <section id="favoritesSection" class="favorites-section" style="display:none;">
+      <span class="fav-label">收藏：</span>
+      <div id="favoritesList" class="favorites-list"></div>
+    </section>
 
-    <label class="field">
-      <span>音调 <strong id="pitchValue">1.0</strong></span>
-      <input id="pitch" type="range" min="0" max="2" step="0.1" value="1" />
-    </label>
+    <!-- Search -->
+    <div class="search-bar">
+      <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+      <input type="text" id="voiceSearch" class="search-input" placeholder="搜索声音..." />
+      <span id="voiceCount" class="voice-count">0 个声音</span>
+    </div>
 
-    <label class="field">
-      <span>音量 <strong id="volumeValue">1.0</strong></span>
-      <input id="volume" type="range" min="0" max="1" step="0.1" value="1" />
-    </label>
+    <!-- Voice List -->
+    <div id="voiceList" class="voice-list"></div>
 
-    <label class="field">
-      <span>情感强度 <strong id="emotionValue">0.8</strong></span>
-      <input id="emotion" type="range" min="0" max="1" step="0.1" value="0.8" />
-    </label>
+    <!-- Cloud Config -->
+    <section id="cloudConfigSection" class="cloud-config" style="display:none;">
+      <div class="cloud-config-header">云端 TTS 服务配置</div>
+      <label class="field">
+        <span>服务地址</span>
+        <input type="text" id="cloudTtsUrl" placeholder="http://localhost:8000" />
+      </label>
+      <label class="field">
+        <span>API Key</span>
+        <input type="password" id="cloudTtsApiKey" placeholder="输入 API Key" />
+      </label>
+      <div class="cloud-actions">
+        <button id="testCloudBtn" class="btn-sm">测试连接</button>
+        <span id="cloudStatus" class="cloud-status"></span>
+      </div>
+    </section>
 
-    <label class="field">
-      <span>朗读风格</span>
-      <select id="readingStyle">
-        <option value="standard">标准播报</option>
-        <option value="story">故事感（更有起伏）</option>
-        <option value="dialogue">对话感（更灵动）</option>
-        <option value="news">新闻播报（更稳重）</option>
-        <option value="calm">舒缓助眠（更慢更轻）</option>
-      </select>
-    </label>
+    <!-- Settings Panel -->
+    <button id="toggleSettings" class="toggle-settings">语音参数设置 ▾</button>
+    <div id="settingsPanel" class="settings-panel">
+      <label class="field">
+        <span>语速 <strong id="rateValue">1.0</strong></span>
+        <input id="rate" type="range" min="0.5" max="2" step="0.1" value="1" />
+      </label>
 
+      <label class="field">
+        <span>音调 <strong id="pitchValue">1.0</strong></span>
+        <input id="pitch" type="range" min="0" max="2" step="0.1" value="1" />
+      </label>
+
+      <label class="field">
+        <span>音量 <strong id="volumeValue">1.0</strong></span>
+        <input id="volume" type="range" min="0" max="1" step="0.1" value="1" />
+      </label>
+
+      <label class="field">
+        <span>情感强度 <strong id="emotionValue">0.8</strong></span>
+        <input id="emotion" type="range" min="0" max="1" step="0.1" value="0.8" />
+      </label>
+
+      <label class="field">
+        <span>朗读风格</span>
+        <select id="readingStyle">
+          <option value="standard">标准播报</option>
+          <option value="story">故事感（更有起伏）</option>
+          <option value="dialogue">对话感（更灵动）</option>
+          <option value="news">新闻播报（更稳重）</option>
+          <option value="calm">舒缓助眠（更慢更轻）</option>
+        </select>
+      </label>
+    </div>
+
+    <!-- Action Buttons -->
     <div class="actions">
       <button id="readBtn">开始朗读</button>
       <button id="pauseBtn" class="secondary">暂停/继续</button>
       <button id="stopBtn" class="danger">停止</button>
     </div>
-
-    <section class="recommend">
-      <h2>开源中文情感语音方案（可配合本插件）</h2>
-      <ul id="opensourceList"></ul>
-      <p class="tip">建议：本地部署以上模型后，用系统虚拟声卡回放可获得明显更自然的中文音色。</p>
-    </section>
 
     <p id="status" class="status">准备就绪</p>
   </main>

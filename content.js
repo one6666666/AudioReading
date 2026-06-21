@@ -1,6 +1,15 @@
+// ============================================================
+// AudioReading Content Script
+// Multi-backend TTS engine: Web Speech API + Edge TTS + Cloud TTS
+// ============================================================
+
 let currentQueue = [];
 let speaking = false;
 let paused = false;
+let currentSettings = null;
+let activeAudioElement = null;
+
+// ---- Text extraction ----
 
 function getCleanText() {
   const root = document.querySelector('article, main') || document.body;
@@ -60,6 +69,8 @@ function splitTextBySentence(text, maxChunkLength = 220) {
   return chunks;
 }
 
+// ---- Voice resolution ----
+
 function findVoiceByURI(voiceURI) {
   return speechSynthesis.getVoices().find((v) => v.voiceURI === voiceURI) || null;
 }
@@ -92,12 +103,10 @@ function resolveSpeechSettings(settings) {
     1
   );
 
-  return {
-    rate,
-    pitch,
-    volume
-  };
+  return { rate, pitch, volume };
 }
+
+// ---- Prosody / emotion adjustments ----
 
 function getProsodyAdjustments(text, settings) {
   const overrides = settings.overrides || {};
@@ -154,7 +163,7 @@ function getProsodyAdjustments(text, settings) {
     pitchDelta += 0.03 * intensity;
   }
 
-  if (/["“”「」『』]/u.test(chunk)) {
+  if (/["""「」『』]/u.test(chunk)) {
     pitchDelta += 0.04 * intensity;
     rateDelta += 0.02 * intensity;
   }
@@ -181,14 +190,23 @@ function getProsodyAdjustments(text, settings) {
   return { rateDelta, pitchDelta, volumeDelta };
 }
 
+// ---- Stop / cleanup ----
+
 function stopAll() {
   currentQueue = [];
   speaking = false;
   paused = false;
   speechSynthesis.cancel();
+  if (activeAudioElement) {
+    activeAudioElement.pause();
+    activeAudioElement.src = '';
+    activeAudioElement = null;
+  }
 }
 
-function speakQueue(settings) {
+// ---- Web Speech API playback ----
+
+function speakQueueWebSpeech(settings) {
   if (!currentQueue.length) {
     speaking = false;
     return;
@@ -208,15 +226,206 @@ function speakQueue(settings) {
 
   utterance.onend = () => {
     if (paused) return;
-    speakQueue(settings);
+    speakQueueWebSpeech(settings);
   };
 
   utterance.onerror = () => {
-    speakQueue(settings);
+    speakQueueWebSpeech(settings);
   };
 
   speechSynthesis.speak(utterance);
 }
+
+// ---- Edge TTS playback ----
+
+const EDGE_TTS_URL = 'https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4';
+
+function buildSSML(text, voiceName, rate, pitch) {
+  const ratePercent = Math.round((rate - 1) * 100);
+  const pitchPercent = Math.round((pitch - 1) * 100);
+  const lang = voiceName.split('-').slice(0, 2).join('-');
+
+  const escapedText = text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+
+  return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="${lang}">
+  <voice name="${voiceName}">
+    <prosody rate="${ratePercent >= 0 ? '+' : ''}${ratePercent}%" pitch="${pitchPercent >= 0 ? '+' : ''}${pitchPercent}Hz">
+      ${escapedText}
+    </prosody>
+  </voice>
+</speak>`;
+}
+
+async function synthesizeEdgeTTS(text, voiceName, rate, pitch) {
+  const ssml = buildSSML(text, voiceName, rate, pitch);
+
+  const response = await fetch(EDGE_TTS_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/ssml+xml',
+      'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0'
+    },
+    body: ssml
+  });
+
+  if (!response.ok) {
+    throw new Error(`Edge TTS returned ${response.status}`);
+  }
+
+  return response.arrayBuffer();
+}
+
+function playAudioBuffer(arrayBuffer, onEnd, onError) {
+  const blob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
+  const url = URL.createObjectURL(blob);
+  const audio = new Audio(url);
+
+  activeAudioElement = audio;
+
+  audio.onended = () => {
+    URL.revokeObjectURL(url);
+    activeAudioElement = null;
+    if (onEnd) onEnd();
+  };
+
+  audio.onerror = (e) => {
+    URL.revokeObjectURL(url);
+    activeAudioElement = null;
+    console.error('Audio playback error:', e);
+    if (onError) onError();
+  };
+
+  audio.play().catch((e) => {
+    URL.revokeObjectURL(url);
+    activeAudioElement = null;
+    console.error('Audio play() rejected:', e);
+    if (onError) onError();
+  });
+}
+
+async function speakQueueEdgeTTS(settings) {
+  if (!currentQueue.length) {
+    speaking = false;
+    return;
+  }
+
+  const chunk = currentQueue.shift();
+  const voiceName = settings.edgeVoiceName || 'zh-CN-XiaoxiaoNeural';
+  const merged = resolveSpeechSettings(settings);
+
+  try {
+    const audioData = await synthesizeEdgeTTS(chunk, voiceName, merged.rate, merged.pitch);
+
+    if (paused) {
+      currentQueue.unshift(chunk);
+      return;
+    }
+
+    playAudioBuffer(
+      audioData,
+      () => {
+        if (!paused) speakQueueEdgeTTS(settings);
+      },
+      () => {
+        // On error, try next chunk
+        if (!paused) speakQueueEdgeTTS(settings);
+      }
+    );
+  } catch (err) {
+    console.error('Edge TTS synthesis error:', err);
+    // Fallback: skip this chunk and continue
+    if (!paused) speakQueueEdgeTTS(settings);
+  }
+}
+
+// ---- Cloud TTS (backend) playback ----
+
+async function speakQueueCloudTTS(settings) {
+  if (!currentQueue.length) {
+    speaking = false;
+    return;
+  }
+
+  const chunk = currentQueue.shift();
+  const merged = resolveSpeechSettings(settings);
+
+  try {
+    const response = await fetch(`${settings.cloudTtsUrl}/api/tts/synthesize`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': settings.cloudTtsApiKey || ''
+      },
+      body: JSON.stringify({
+        text: chunk,
+        voice: settings.cloudVoiceId || 'longxiaochun',
+        speed: merged.rate,
+        pitch: merged.pitch,
+        format: 'mp3',
+        sample_rate: 24000
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Cloud TTS returned ${response.status}`);
+    }
+
+    const result = await response.json();
+    const audioUrl = result.audio_url;
+
+    if (!audioUrl) {
+      throw new Error('No audio URL in response');
+    }
+
+    if (paused) {
+      currentQueue.unshift(chunk);
+      return;
+    }
+
+    const audio = new Audio(audioUrl);
+    activeAudioElement = audio;
+
+    audio.onended = () => {
+      activeAudioElement = null;
+      if (!paused) speakQueueCloudTTS(settings);
+    };
+
+    audio.onerror = () => {
+      activeAudioElement = null;
+      if (!paused) speakQueueCloudTTS(settings);
+    };
+
+    audio.play();
+  } catch (err) {
+    console.error('Cloud TTS error:', err);
+    if (!paused) speakQueueCloudTTS(settings);
+  }
+}
+
+// ---- Voice preview for Edge TTS ----
+
+async function previewEdgeVoice(voiceName, sampleText) {
+  try {
+    const audioData = await synthesizeEdgeTTS(sampleText, voiceName, 1.0, 1.0);
+    return new Promise((resolve, reject) => {
+      playAudioBuffer(
+        audioData,
+        () => resolve({ ok: true }),
+        (err) => reject(err || new Error('Preview playback failed'))
+      );
+    });
+  } catch (err) {
+    throw err;
+  }
+}
+
+// ---- Voice list ----
 
 function getVoices() {
   const voices = speechSynthesis.getVoices();
@@ -258,7 +467,29 @@ function waitForVoices(timeoutMs = 3000) {
   });
 }
 
+// ---- Unified speak dispatcher ----
+
+function speakQueue(settings) {
+  const source = settings.voiceSource || 'system';
+
+  switch (source) {
+    case 'edge':
+      speakQueueEdgeTTS(settings);
+      break;
+    case 'cloud':
+      speakQueueCloudTTS(settings);
+      break;
+    case 'system':
+    default:
+      speakQueueWebSpeech(settings);
+      break;
+  }
+}
+
+// ---- Message handler ----
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // ---- GET_VOICES ----
   if (message.type === 'GET_VOICES') {
     waitForVoices()
       .then((voices) => {
@@ -270,6 +501,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  // ---- PREVIEW_EDGE_VOICE ----
+  if (message.type === 'PREVIEW_EDGE_VOICE') {
+    const { voiceName, sampleText } = message.payload;
+    previewEdgeVoice(voiceName, sampleText || '你好，这是一段语音预览测试。')
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ ok: false, message: err.message }));
+    return true;
+  }
+
+  // ---- READ_PAGE ----
   if (message.type === 'READ_PAGE') {
     const text = getCleanText();
     if (!text) {
@@ -278,6 +519,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     }
 
     stopAll();
+    currentSettings = message.payload;
     currentQueue = splitTextBySentence(text);
     paused = false;
     speakQueue(message.payload);
@@ -286,25 +528,43 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  // ---- TOGGLE_PAUSE ----
   if (message.type === 'TOGGLE_PAUSE') {
     if (!speaking) {
       sendResponse({ message: '当前未在朗读' });
       return true;
     }
 
-    if (speechSynthesis.paused) {
-      speechSynthesis.resume();
-      paused = false;
-      sendResponse({ message: '已继续朗读' });
-    } else {
-      speechSynthesis.pause();
-      paused = true;
-      sendResponse({ message: '已暂停朗读' });
+    const source = currentSettings?.voiceSource || 'system';
+
+    if (source === 'system') {
+      if (speechSynthesis.paused) {
+        speechSynthesis.resume();
+        paused = false;
+        sendResponse({ message: '已继续朗读' });
+      } else {
+        speechSynthesis.pause();
+        paused = true;
+        sendResponse({ message: '已暂停朗读' });
+      }
+    } else if (source === 'edge' || source === 'cloud') {
+      if (paused) {
+        paused = false;
+        speakQueue(currentSettings);
+        sendResponse({ message: '已继续朗读' });
+      } else {
+        paused = true;
+        if (activeAudioElement) {
+          activeAudioElement.pause();
+        }
+        sendResponse({ message: '已暂停朗读' });
+      }
     }
 
     return true;
   }
 
+  // ---- STOP_READING ----
   if (message.type === 'STOP_READING') {
     stopAll();
     sendResponse({ message: '已停止朗读' });
@@ -313,6 +573,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
   return false;
 });
+
+// ---- Voice change listener ----
 
 if (typeof speechSynthesis !== 'undefined') {
   speechSynthesis.onvoiceschanged = () => {
