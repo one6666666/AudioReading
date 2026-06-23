@@ -37,99 +37,104 @@ let selectedVoiceId = null;
 let isPreviewPlaying = false;
 
 // ============================================================
-// Edge TTS Voice Catalog (curated, free, high-quality natural voices)
+// Natural Voice Catalog — Amazon Polly neural voices (via StreamElements)
+// Free, no API key, high-quality neural TTS
 // ============================================================
 
 const EDGE_VOICES = [
-  // ---- 中文普通话 ----
-  { id: 'zh-CN-XiaoxiaoNeural', name: '晓晓', lang: 'zh-CN', gender: 'female', label: '晓晓（女·活泼）', style: 'general', quality: 'premium' },
-  { id: 'zh-CN-XiaoyiNeural', name: '晓伊', lang: 'zh-CN', gender: 'female', label: '晓伊（女·温柔）', style: 'general', quality: 'premium' },
-  { id: 'zh-CN-YunxiNeural', name: '云希', lang: 'zh-CN', gender: 'male', label: '云希（男·清新）', style: 'general', quality: 'premium' },
-  { id: 'zh-CN-YunyangNeural', name: '云扬', lang: 'zh-CN', gender: 'male', label: '云扬（男·新闻）', style: 'news', quality: 'premium' },
-  { id: 'zh-CN-XiaohanNeural', name: '晓涵', lang: 'zh-CN', gender: 'female', label: '晓涵（女·知性）', style: 'general', quality: 'premium' },
-  { id: 'zh-CN-XiaomoNeural', name: '晓墨', lang: 'zh-CN', gender: 'female', label: '晓墨（女·沉稳）', style: 'general', quality: 'premium' },
-  { id: 'zh-CN-XiaoruiNeural', name: '晓睿', lang: 'zh-CN', gender: 'female', label: '晓睿（女·睿智）', style: 'general', quality: 'premium' },
-  { id: 'zh-CN-XiaoxuanNeural', name: '晓萱', lang: 'zh-CN', gender: 'female', label: '晓萱（女·自信）', style: 'general', quality: 'premium' },
-  { id: 'zh-CN-YunjianNeural', name: '云健', lang: 'zh-CN', gender: 'male', label: '云健（男·运动）', style: 'sports', quality: 'premium' },
-  { id: 'zh-CN-YunxiaNeural', name: '云夏', lang: 'zh-CN', gender: 'male', label: '云夏（男·少年）', style: 'general', quality: 'premium' },
-  { id: 'zh-CN-YunyeNeural', name: '云野', lang: 'zh-CN', gender: 'male', label: '云野（男·成熟）', style: 'general', quality: 'premium' },
-  { id: 'zh-CN-liaoning-XiaobeiNeural', name: '晓北', lang: 'zh-CN', gender: 'female', label: '晓北（东北话·女）', style: 'dialect', quality: 'premium' },
-
-  // ---- 中文粤语 ----
-  { id: 'zh-HK-HiuMaanNeural', name: '曉曼', lang: 'zh-HK', gender: 'female', label: '曉曼（粤语·女）', style: 'general', quality: 'premium' },
-  { id: 'zh-HK-HiuGaaiNeural', name: '曉佳', lang: 'zh-HK', gender: 'female', label: '曉佳（粤语·女）', style: 'general', quality: 'premium' },
-  { id: 'zh-HK-WanLungNeural', name: '雲龍', lang: 'zh-HK', gender: 'male', label: '雲龍（粤语·男）', style: 'general', quality: 'premium' },
-
-  // ---- 中文台湾 ----
-  { id: 'zh-TW-HsiaoChenNeural', name: '曉臻', lang: 'zh-TW', gender: 'female', label: '曉臻（台湾·女）', style: 'general', quality: 'premium' },
-  { id: 'zh-TW-HsiaoYuNeural', name: '曉雨', lang: 'zh-TW', gender: 'female', label: '曉雨（台湾·女）', style: 'general', quality: 'premium' },
-  { id: 'zh-TW-YunJheNeural', name: '雲哲', lang: 'zh-TW', gender: 'male', label: '雲哲（台湾·男）', style: 'general', quality: 'premium' },
+  // ---- 中文 ----
+  { id: 'Zhiyu', name: 'Zhiyu', lang: 'zh-CN', gender: 'female', label: 'Zhiyu（女·自然）', style: 'neural', quality: 'premium' },
 
   // ---- English (US) ----
-  { id: 'en-US-JennyNeural', name: 'Jenny', lang: 'en-US', gender: 'female', label: 'Jenny (US·Female)', style: 'general', quality: 'premium' },
-  { id: 'en-US-AriaNeural', name: 'Aria', lang: 'en-US', gender: 'female', label: 'Aria (US·Female)', style: 'general', quality: 'premium' },
-  { id: 'en-US-GuyNeural', name: 'Guy', lang: 'en-US', gender: 'male', label: 'Guy (US·Male)', style: 'general', quality: 'premium' },
-  { id: 'en-US-DavisNeural', name: 'Davis', lang: 'en-US', gender: 'male', label: 'Davis (US·Male)', style: 'general', quality: 'premium' },
-  { id: 'en-US-AmberNeural', name: 'Amber', lang: 'en-US', gender: 'female', label: 'Amber (US·Female)', style: 'general', quality: 'premium' },
-  { id: 'en-US-AnaNeural', name: 'Ana', lang: 'en-US', gender: 'female', label: 'Ana (US·Female·Child)', style: 'general', quality: 'premium' },
-  { id: 'en-US-BrandonNeural', name: 'Brandon', lang: 'en-US', gender: 'male', label: 'Brandon (US·Male)', style: 'general', quality: 'premium' },
-  { id: 'en-US-ChristopherNeural', name: 'Christopher', lang: 'en-US', gender: 'male', label: 'Christopher (US·Male)', style: 'general', quality: 'premium' },
-  { id: 'en-US-EricNeural', name: 'Eric', lang: 'en-US', gender: 'male', label: 'Eric (US·Male)', style: 'general', quality: 'premium' },
-  { id: 'en-US-MichelleNeural', name: 'Michelle', lang: 'en-US', gender: 'female', label: 'Michelle (US·Female)', style: 'general', quality: 'premium' },
-  { id: 'en-US-RogerNeural', name: 'Roger', lang: 'en-US', gender: 'male', label: 'Roger (US·Male)', style: 'general', quality: 'premium' },
-  { id: 'en-US-SteffanNeural', name: 'Steffan', lang: 'en-US', gender: 'male', label: 'Steffan (US·Male)', style: 'general', quality: 'premium' },
+  { id: 'Joanna', name: 'Joanna', lang: 'en-US', gender: 'female', label: 'Joanna (US·女·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Matthew', name: 'Matthew', lang: 'en-US', gender: 'male', label: 'Matthew (US·男·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Joey', name: 'Joey', lang: 'en-US', gender: 'male', label: 'Joey (US·男·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Kendra', name: 'Kendra', lang: 'en-US', gender: 'female', label: 'Kendra (US·女·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Ivy', name: 'Ivy', lang: 'en-US', gender: 'female', label: 'Ivy (US·女·童声)', style: 'neural', quality: 'premium' },
+  { id: 'Kimberly', name: 'Kimberly', lang: 'en-US', gender: 'female', label: 'Kimberly (US·女·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Salli', name: 'Salli', lang: 'en-US', gender: 'female', label: 'Salli (US·女·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Justin', name: 'Justin', lang: 'en-US', gender: 'male', label: 'Justin (US·男·童声)', style: 'neural', quality: 'premium' },
 
   // ---- English (UK) ----
-  { id: 'en-GB-LibbyNeural', name: 'Libby', lang: 'en-GB', gender: 'female', label: 'Libby (UK·Female)', style: 'general', quality: 'premium' },
-  { id: 'en-GB-RyanNeural', name: 'Ryan', lang: 'en-GB', gender: 'male', label: 'Ryan (UK·Male)', style: 'general', quality: 'premium' },
-  { id: 'en-GB-SoniaNeural', name: 'Sonia', lang: 'en-GB', gender: 'female', label: 'Sonia (UK·Female)', style: 'general', quality: 'premium' },
-  { id: 'en-GB-MaisieNeural', name: 'Maisie', lang: 'en-GB', gender: 'female', label: 'Maisie (UK·Female)', style: 'general', quality: 'premium' },
+  { id: 'Amy', name: 'Amy', lang: 'en-GB', gender: 'female', label: 'Amy (UK·女·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Emma', name: 'Emma', lang: 'en-GB', gender: 'female', label: 'Emma (UK·女·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Brian', name: 'Brian', lang: 'en-GB', gender: 'male', label: 'Brian (UK·男·神经)', style: 'neural', quality: 'premium' },
 
   // ---- English (AU) ----
-  { id: 'en-AU-NatashaNeural', name: 'Natasha', lang: 'en-AU', gender: 'female', label: 'Natasha (AU·Female)', style: 'general', quality: 'premium' },
-  { id: 'en-AU-WilliamNeural', name: 'William', lang: 'en-AU', gender: 'male', label: 'William (AU·Male)', style: 'general', quality: 'premium' },
+  { id: 'Nicole', name: 'Nicole', lang: 'en-AU', gender: 'female', label: 'Nicole (AU·女)', style: 'standard', quality: 'standard' },
+  { id: 'Russell', name: 'Russell', lang: 'en-AU', gender: 'male', label: 'Russell (AU·男)', style: 'standard', quality: 'standard' },
+
+  // ---- English (IN) ----
+  { id: 'Raveena', name: 'Raveena', lang: 'en-IN', gender: 'female', label: 'Raveena (IN·女)', style: 'standard', quality: 'standard' },
+  { id: 'Aditi', name: 'Aditi', lang: 'en-IN', gender: 'female', label: 'Aditi (IN·女)', style: 'standard', quality: 'standard' },
 
   // ---- Japanese ----
-  { id: 'ja-JP-NanamiNeural', name: '七海', lang: 'ja-JP', gender: 'female', label: '七海（日文·女）', style: 'general', quality: 'premium' },
-  { id: 'ja-JP-KeitaNeural', name: '慶太', lang: 'ja-JP', gender: 'male', label: '慶太（日文·男）', style: 'general', quality: 'premium' },
-  { id: 'ja-JP-AoiNeural', name: '碧', lang: 'ja-JP', gender: 'female', label: '碧（日文·女）', style: 'general', quality: 'premium' },
-  { id: 'ja-JP-DaichiNeural', name: '大地', lang: 'ja-JP', gender: 'male', label: '大地（日文·男）', style: 'general', quality: 'premium' },
-  { id: 'ja-JP-MayuNeural', name: '真夕', lang: 'ja-JP', gender: 'female', label: '真夕（日文·女）', style: 'general', quality: 'premium' },
+  { id: 'Mizuki', name: 'Mizuki', lang: 'ja-JP', gender: 'female', label: 'Mizuki（日文·女·神经）', style: 'neural', quality: 'premium' },
+  { id: 'Takumi', name: 'Takumi', lang: 'ja-JP', gender: 'male', label: 'Takumi（日文·男·神经）', style: 'neural', quality: 'premium' },
 
   // ---- Korean ----
-  { id: 'ko-KR-SunHiNeural', name: '선히', lang: 'ko-KR', gender: 'female', label: '선히（韩文·女）', style: 'general', quality: 'premium' },
-  { id: 'ko-KR-InJoonNeural', name: '인준', lang: 'ko-KR', gender: 'male', label: '인준（韩文·男）', style: 'general', quality: 'premium' },
-  { id: 'ko-KR-JiMinNeural', name: '지민', lang: 'ko-KR', gender: 'female', label: '지민（韩文·女）', style: 'general', quality: 'premium' },
+  { id: 'Seoyeon', name: 'Seoyeon', lang: 'ko-KR', gender: 'female', label: 'Seoyeon（韩文·女·神经）', style: 'neural', quality: 'premium' },
 
   // ---- French ----
-  { id: 'fr-FR-DeniseNeural', name: 'Denise', lang: 'fr-FR', gender: 'female', label: 'Denise (FR·Female)', style: 'general', quality: 'premium' },
-  { id: 'fr-FR-HenriNeural', name: 'Henri', lang: 'fr-FR', gender: 'male', label: 'Henri (FR·Male)', style: 'general', quality: 'premium' },
+  { id: 'Lea', name: 'Lea', lang: 'fr-FR', gender: 'female', label: 'Léa (FR·女·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Celine', name: 'Celine', lang: 'fr-FR', gender: 'female', label: 'Céline (FR·女)', style: 'standard', quality: 'standard' },
+  { id: 'Mathieu', name: 'Mathieu', lang: 'fr-FR', gender: 'male', label: 'Mathieu (FR·男)', style: 'standard', quality: 'standard' },
 
   // ---- German ----
-  { id: 'de-DE-KatjaNeural', name: 'Katja', lang: 'de-DE', gender: 'female', label: 'Katja (DE·Female)', style: 'general', quality: 'premium' },
-  { id: 'de-DE-ConradNeural', name: 'Conrad', lang: 'de-DE', gender: 'male', label: 'Conrad (DE·Male)', style: 'general', quality: 'premium' },
+  { id: 'Vicki', name: 'Vicki', lang: 'de-DE', gender: 'female', label: 'Vicki (DE·女·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Marlene', name: 'Marlene', lang: 'de-DE', gender: 'female', label: 'Marlene (DE·女)', style: 'standard', quality: 'standard' },
+  { id: 'Hans', name: 'Hans', lang: 'de-DE', gender: 'male', label: 'Hans (DE·男)', style: 'standard', quality: 'standard' },
 
   // ---- Spanish ----
-  { id: 'es-ES-ElviraNeural', name: 'Elvira', lang: 'es-ES', gender: 'female', label: 'Elvira (ES·Female)', style: 'general', quality: 'premium' },
-  { id: 'es-ES-AlvaroNeural', name: 'Alvaro', lang: 'es-ES', gender: 'male', label: 'Alvaro (ES·Male)', style: 'general', quality: 'premium' },
-  { id: 'es-MX-DaliaNeural', name: 'Dalia', lang: 'es-MX', gender: 'female', label: 'Dalia (MX·Female)', style: 'general', quality: 'premium' },
-  { id: 'es-MX-JorgeNeural', name: 'Jorge', lang: 'es-MX', gender: 'male', label: 'Jorge (MX·Male)', style: 'general', quality: 'premium' },
+  { id: 'Lucia', name: 'Lucia', lang: 'es-ES', gender: 'female', label: 'Lucía (ES·女·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Conchita', name: 'Conchita', lang: 'es-ES', gender: 'female', label: 'Conchita (ES·女)', style: 'standard', quality: 'standard' },
+  { id: 'Enrique', name: 'Enrique', lang: 'es-ES', gender: 'male', label: 'Enrique (ES·男)', style: 'standard', quality: 'standard' },
+  { id: 'Mia', name: 'Mia', lang: 'es-MX', gender: 'female', label: 'Mia (MX·女)', style: 'standard', quality: 'standard' },
+  { id: 'Miguel', name: 'Miguel', lang: 'es-US', gender: 'male', label: 'Miguel (US西·男)', style: 'standard', quality: 'standard' },
+  { id: 'Penelope', name: 'Penelope', lang: 'es-US', gender: 'female', label: 'Penélope (US西·女)', style: 'standard', quality: 'standard' },
 
   // ---- Portuguese ----
-  { id: 'pt-BR-FranciscaNeural', name: 'Francisca', lang: 'pt-BR', gender: 'female', label: 'Francisca (BR·Female)', style: 'general', quality: 'premium' },
-  { id: 'pt-BR-AntonioNeural', name: 'Antonio', lang: 'pt-BR', gender: 'male', label: 'Antonio (BR·Male)', style: 'general', quality: 'premium' },
+  { id: 'Vitoria', name: 'Vitoria', lang: 'pt-BR', gender: 'female', label: 'Vitória (BR·女·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Camila', name: 'Camila', lang: 'pt-BR', gender: 'female', label: 'Camila (BR·女·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Ricardo', name: 'Ricardo', lang: 'pt-BR', gender: 'male', label: 'Ricardo (BR·男)', style: 'standard', quality: 'standard' },
+  { id: 'Ines', name: 'Ines', lang: 'pt-PT', gender: 'female', label: 'Inês (PT·女·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Cristiano', name: 'Cristiano', lang: 'pt-PT', gender: 'male', label: 'Cristiano (PT·男)', style: 'standard', quality: 'standard' },
 
   // ---- Italian ----
-  { id: 'it-IT-ElsaNeural', name: 'Elsa', lang: 'it-IT', gender: 'female', label: 'Elsa (IT·Female)', style: 'general', quality: 'premium' },
-  { id: 'it-IT-IsabellaNeural', name: 'Isabella', lang: 'it-IT', gender: 'female', label: 'Isabella (IT·Female)', style: 'general', quality: 'premium' },
+  { id: 'Carla', name: 'Carla', lang: 'it-IT', gender: 'female', label: 'Carla (IT·女·神经)', style: 'neural', quality: 'premium' },
+  { id: 'Bianca', name: 'Bianca', lang: 'it-IT', gender: 'female', label: 'Bianca (IT·女)', style: 'standard', quality: 'standard' },
+  { id: 'Giorgio', name: 'Giorgio', lang: 'it-IT', gender: 'male', label: 'Giorgio (IT·男)', style: 'standard', quality: 'standard' },
 
   // ---- Russian ----
-  { id: 'ru-RU-SvetlanaNeural', name: 'Светлана', lang: 'ru-RU', gender: 'female', label: 'Светлана (RU·Female)', style: 'general', quality: 'premium' },
-  { id: 'ru-RU-DmitryNeural', name: 'Дмитрий', lang: 'ru-RU', gender: 'male', label: 'Дмитрий (RU·Male)', style: 'general', quality: 'premium' },
+  { id: 'Tatyana', name: 'Tatyana', lang: 'ru-RU', gender: 'female', label: 'Татьяна (RU·女)', style: 'standard', quality: 'standard' },
+  { id: 'Maxim', name: 'Maxim', lang: 'ru-RU', gender: 'male', label: 'Максим (RU·男)', style: 'standard', quality: 'standard' },
+
+  // ---- Dutch ----
+  { id: 'Lotte', name: 'Lotte', lang: 'nl-NL', gender: 'female', label: 'Lotte (NL·女)', style: 'standard', quality: 'standard' },
+  { id: 'Ruben', name: 'Ruben', lang: 'nl-NL', gender: 'male', label: 'Ruben (NL·男)', style: 'standard', quality: 'standard' },
+
+  // ---- Polish ----
+  { id: 'Ewa', name: 'Ewa', lang: 'pl-PL', gender: 'female', label: 'Ewa (PL·女)', style: 'standard', quality: 'standard' },
+  { id: 'Jacek', name: 'Jacek', lang: 'pl-PL', gender: 'male', label: 'Jacek (PL·男)', style: 'standard', quality: 'standard' },
+
+  // ---- Turkish ----
+  { id: 'Filiz', name: 'Filiz', lang: 'tr-TR', gender: 'female', label: 'Filiz (TR·女)', style: 'standard', quality: 'standard' },
+
+  // ---- Swedish ----
+  { id: 'Astrid', name: 'Astrid', lang: 'sv-SE', gender: 'female', label: 'Astrid (SE·女)', style: 'standard', quality: 'standard' },
+
+  // ---- Danish ----
+  { id: 'Naja', name: 'Naja', lang: 'da-DK', gender: 'female', label: 'Naja (DK·女)', style: 'standard', quality: 'standard' },
+  { id: 'Mads', name: 'Mads', lang: 'da-DK', gender: 'male', label: 'Mads (DK·男)', style: 'standard', quality: 'standard' },
+
+  // ---- Norwegian ----
+  { id: 'Liv', name: 'Liv', lang: 'nb-NO', gender: 'female', label: 'Liv (NO·女)', style: 'standard', quality: 'standard' },
+
+  // ---- Welsh ----
+  { id: 'Gwyneth', name: 'Gwyneth', lang: 'cy-GB', gender: 'female', label: 'Gwyneth (CY·女)', style: 'standard', quality: 'standard' },
 
   // ---- Arabic ----
-  { id: 'ar-SA-ZariyahNeural', name: 'زارية', lang: 'ar-SA', gender: 'female', label: 'زارية (SA·Female)', style: 'general', quality: 'premium' },
-  { id: 'ar-SA-HamedNeural', name: 'حامد', lang: 'ar-SA', gender: 'male', label: 'حامد (SA·Male)', style: 'general', quality: 'premium' },
+  { id: 'Zeina', name: 'Zeina', lang: 'ar-SA', gender: 'female', label: 'Zeina (AR·女)', style: 'standard', quality: 'standard' },
 ];
 
 // Group Edge voices by language for display
@@ -189,7 +194,7 @@ function getQualityBadge(quality) {
 }
 
 function getSourceBadge(source) {
-  if (source === 'edge') return '<span class="badge badge-edge">Edge</span>';
+  if (source === 'edge') return '<span class="badge badge-edge">Polly</span>';
   if (source === 'cloud') return '<span class="badge badge-cloud">Cloud</span>';
   return '<span class="badge badge-system">系统</span>';
 }
@@ -286,7 +291,14 @@ async function previewVoice(voiceData, source, cardElement) {
     'pt': 'Olá, esta é uma pré-visualização de voz natural.',
     'it': 'Ciao, questa è un\'anteprima vocale naturale.',
     'ru': 'Здравствуйте, это предварительный просмотр естественного голоса.',
-    'ar': 'مرحباً، هذه معاينة صوتية طبيعية.'
+    'ar': 'مرحباً، هذه معاينة صوتية طبيعية.',
+    'nl': 'Hallo, dit is een natuurlijke stemvoorbeeld.',
+    'pl': 'Cześć, to jest naturalny podgląd głosu.',
+    'tr': 'Merhaba, bu doğal bir ses önizlemesidir.',
+    'sv': 'Hej, detta är en naturlig röstförhandsgranskning.',
+    'da': 'Hej, dette er en naturlig stemmeeksempel.',
+    'nb': 'Hei, dette er en naturlig stemmeforhåndsvisning.',
+    'cy': 'Helo, dymagolwg llais naturiol.'
   };
 
   const langPrefix = (voiceData.lang || 'zh').split('-')[0];
@@ -506,7 +518,9 @@ function renderEdgeVoices(searchTerm, favIds) {
   const langNames = {
     'zh': '中文', 'en': 'English', 'ja': '日本語', 'ko': '한국어',
     'fr': 'Français', 'de': 'Deutsch', 'es': 'Español',
-    'pt': 'Português', 'it': 'Italiano', 'ru': 'Русский', 'ar': 'العربية'
+    'pt': 'Português', 'it': 'Italiano', 'ru': 'Русский', 'ar': 'العربية',
+    'nl': 'Nederlands', 'pl': 'Polski', 'tr': 'Türkçe',
+    'sv': 'Svenska', 'da': 'Dansk', 'nb': 'Norsk', 'cy': 'Cymraeg'
   };
 
   for (const [langKey, langVoices] of Object.entries(groups)) {
@@ -855,7 +869,7 @@ async function init() {
     });
   }
 
-  setStatus(`就绪${sysCount ? ` · ${sysCount} 个系统语音 + ${EDGE_VOICES.length} 个 Edge 自然语音` : ''}`);
+  setStatus(`就绪${sysCount ? ` · ${sysCount} 个系统语音 + ${EDGE_VOICES.length} 个自然语音` : ''}`);
 }
 
 init();

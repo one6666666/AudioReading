@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "网页朗读助手",
-  "description": "朗读当前网页文字，支持系统语音、Edge 自然语音（50+语种/音色）和云端 TTS，带语音试听与收藏功能。",
+  "description": "朗读当前网页文字，支持系统语音、自然语音（Amazon Polly 神经网络，50+语种/音色）和云端 TTS，带语音试听与收藏功能。",
   "version": "2.0.0",
   "permissions": ["activeTab", "storage", "scripting"],
   "host_permissions": ["<all_urls>"],

@@ -1,77 +1,229 @@
 // ============================================================
 // AudioReading Background Service Worker
-// Edge TTS synthesis with dynamic Sec-MS-GEC authentication
+// Multi-provider TTS: StreamElements (Amazon Polly) + Google Translate
+// Free, no authentication required, works in Chrome MV3
 // ============================================================
 
-// --- Constants (from edge-tts Python library) ---
-const TRUSTED_CLIENT_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
-const CHROMIUM_FULL_VERSION = '143.0.3650.75';
-const CHROMIUM_MAJOR_VERSION = '143';
-const SEC_MS_GEC_VERSION = `1-${CHROMIUM_FULL_VERSION}`;
-const WIN_EPOCH_SEC = 11644473600; // diff between 1601-01-01 and 1970-01-01
-
-const BASE_URL = 'speech.platform.bing.com/consumer/speech/synthesize/readaloud';
-const WSS_URL = `wss://${BASE_URL}/edge/v1?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}`;
-const HTTP_URL = `https://${BASE_URL}/edge/v1?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}`;
-
 // ============================================================
-// Sec-MS-GEC token generation (edge-tts DRM algorithm)
+// Voice resolution: map voice IDs to provider + voice name
 // ============================================================
 
-async function generateSecMSGEC() {
-  // 1. Get current Unix timestamp (seconds)
-  let ticks = Date.now() / 1000;
+// Backward compatibility: map old Edge TTS voice IDs → Polly voices
+const EDGE_TO_POLLY = {
+  // Chinese
+  'zh-CN-XiaoxiaoNeural': 'Zhiyu', 'zh-CN-XiaoyiNeural': 'Zhiyu',
+  'zh-CN-YunxiNeural': 'Zhiyu', 'zh-CN-YunyangNeural': 'Zhiyu',
+  'zh-CN-XiaohanNeural': 'Zhiyu', 'zh-CN-XiaomoNeural': 'Zhiyu',
+  'zh-CN-XiaoruiNeural': 'Zhiyu', 'zh-CN-XiaoxuanNeural': 'Zhiyu',
+  'zh-CN-YunjianNeural': 'Zhiyu', 'zh-CN-YunxiaNeural': 'Zhiyu',
+  'zh-CN-YunyeNeural': 'Zhiyu', 'zh-CN-liaoning-XiaobeiNeural': 'Zhiyu',
+  // English US
+  'en-US-JennyNeural': 'Joanna', 'en-US-AriaNeural': 'Salli',
+  'en-US-GuyNeural': 'Matthew', 'en-US-DavisNeural': 'Joey',
+  'en-US-AmberNeural': 'Kendra', 'en-US-AnaNeural': 'Ivy',
+  'en-US-BrandonNeural': 'Justin', 'en-US-ChristopherNeural': 'Matthew',
+  'en-US-EricNeural': 'Joey', 'en-US-MichelleNeural': 'Kendra',
+  'en-US-RogerNeural': 'Matthew', 'en-US-SteffanNeural': 'Joey',
+  // English UK
+  'en-GB-LibbyNeural': 'Amy', 'en-GB-RyanNeural': 'Brian',
+  'en-GB-SoniaNeural': 'Emma', 'en-GB-MaisieNeural': 'Amy',
+  // English AU
+  'en-AU-NatashaNeural': 'Nicole', 'en-AU-WilliamNeural': 'Russell',
+  // Japanese
+  'ja-JP-NanamiNeural': 'Mizuki', 'ja-JP-KeitaNeural': 'Takumi',
+  'ja-JP-AoiNeural': 'Mizuki', 'ja-JP-DaichiNeural': 'Takumi',
+  'ja-JP-MayuNeural': 'Mizuki',
+  // Korean
+  'ko-KR-SunHiNeural': 'Seoyeon', 'ko-KR-InJoonNeural': 'Seoyeon',
+  'ko-KR-JiMinNeural': 'Seoyeon',
+  // French
+  'fr-FR-DeniseNeural': 'Lea', 'fr-FR-HenriNeural': 'Mathieu',
+  // German
+  'de-DE-KatjaNeural': 'Vicki', 'de-DE-ConradNeural': 'Hans',
+  // Spanish
+  'es-ES-ElviraNeural': 'Lucia', 'es-ES-AlvaroNeural': 'Enrique',
+  'es-MX-DaliaNeural': 'Mia', 'es-MX-JorgeNeural': 'Miguel',
+  // Portuguese
+  'pt-BR-FranciscaNeural': 'Vitoria', 'pt-BR-AntonioNeural': 'Ricardo',
+  // Italian
+  'it-IT-ElsaNeural': 'Carla', 'it-IT-IsabellaNeural': 'Bianca',
+  // Russian
+  'ru-RU-SvetlanaNeural': 'Tatyana', 'ru-RU-DmitryNeural': 'Maxim',
+  // Arabic
+  'ar-SA-ZariyahNeural': 'Zeina', 'ar-SA-HamedNeural': 'Zeina',
+};
 
-  // 2. Switch to Windows file time epoch (1601-01-01 00:00:00 UTC)
-  ticks += WIN_EPOCH_SEC;
+// Known Polly voices (for direct matching)
+const POLLY_VOICES = new Set([
+  'Zhiyu', 'Mizuki', 'Takumi', 'Seoyeon',
+  'Joanna', 'Matthew', 'Joey', 'Kendra', 'Ivy', 'Kimberly', 'Salli', 'Justin',
+  'Amy', 'Emma', 'Brian', 'Nicole', 'Russell', 'Aditi', 'Raveena',
+  'Lea', 'Celine', 'Mathieu', 'Vicki', 'Marlene', 'Hans',
+  'Lucia', 'Conchita', 'Enrique', 'Mia', 'Miguel', 'Penelope',
+  'Vitoria', 'Ricardo', 'Camila', 'Ines', 'Cristiano',
+  'Carla', 'Bianca', 'Giorgio',
+  'Tatyana', 'Maxim',
+  'Lotte', 'Ruben', 'Ewa', 'Jacek', 'Filiz', 'Astrid',
+  'Naja', 'Mads', 'Liv', 'Gwyneth', 'Zeina',
+]);
 
-  // 3. Round down to nearest 5 minutes (300 seconds)
-  ticks -= ticks % 300;
+function resolveVoice(voiceName) {
+  const voice = voiceName || 'Zhiyu';
 
-  // 4. Convert to 100-nanosecond intervals (Windows file time)
-  ticks = Math.floor(ticks * 1e7); // (1e9 / 100) = 1e7
+  // 1. Direct Polly voice match (e.g., "Zhiyu", "Joanna")
+  if (POLLY_VOICES.has(voice)) {
+    return { provider: 'polly', voice };
+  }
 
-  // 5. Concatenate ticks + trusted client token
-  const strToHash = `${ticks}${TRUSTED_CLIENT_TOKEN}`;
+  // 2. Backward compat: old Edge voice ID → Polly
+  if (EDGE_TO_POLLY[voice]) {
+    return { provider: 'polly', voice: EDGE_TO_POLLY[voice] };
+  }
 
-  // 6. SHA256 → uppercase hex digest
-  const encoder = new TextEncoder();
-  const hashBuffer = await crypto.subtle.digest('SHA-256', encoder.encode(strToHash));
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+  // 3. Language-based fallback
+  const langPrefix = voice.split('-')[0];
+  const langFull = voice.split('-').slice(0, 2).join('-');
+
+  const langToPolly = {
+    'zh': 'Zhiyu', 'ja': 'Mizuki', 'ko': 'Seoyeon',
+    'en-US': 'Joanna', 'en-GB': 'Brian', 'en-AU': 'Nicole', 'en-IN': 'Raveena', 'en': 'Joanna',
+    'fr': 'Lea', 'de': 'Vicki',
+    'es-ES': 'Lucia', 'es-MX': 'Mia', 'es': 'Lucia',
+    'pt-BR': 'Vitoria', 'pt-PT': 'Ines', 'pt': 'Vitoria',
+    'it': 'Carla', 'ru': 'Tatyana',
+    'nl': 'Lotte', 'pl': 'Ewa', 'tr': 'Filiz',
+    'sv': 'Astrid', 'da': 'Naja', 'nb': 'Liv', 'cy': 'Gwyneth',
+    'ar': 'Zeina',
+  };
+
+  if (langToPolly[langFull]) {
+    return { provider: 'polly', voice: langToPolly[langFull] };
+  }
+  if (langToPolly[langPrefix]) {
+    return { provider: 'polly', voice: langToPolly[langPrefix] };
+  }
+
+  // 4. Ultimate fallback: Google Translate with language code
+  return { provider: 'gtts', voice: langPrefix || 'zh-CN' };
 }
 
-function generateConnectionId() {
-  return crypto.randomUUID().replace(/-/g, '');
-}
+// ============================================================
+// Provider 1: StreamElements (Amazon Polly neural voices)
+// GET https://api.streamelements.com/kappa/v2/speech?voice=Zhiyu&text=你好
+// Returns: MP3 audio (no auth, ~550 char limit)
+// ============================================================
 
-function generateMUID() {
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+async function synthesizeViaPolly(text, voice) {
+  const url = `https://api.streamelements.com/kappa/v2/speech?voice=${encodeURIComponent(voice)}&text=${encodeURIComponent(text)}`;
+
+  console.log(`[AudioReading] Polly request: voice=${voice}, text="${text.substring(0, 50)}..."`);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      signal: controller.signal
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      console.error(`[AudioReading] Polly HTTP ${response.status}: ${errText.substring(0, 200)}`);
+      throw new Error(`Polly HTTP ${response.status}`);
+    }
+
+    const buffer = await response.arrayBuffer();
+    if (!buffer || buffer.byteLength < 100) {
+      throw new Error('Polly returned insufficient audio data');
+    }
+
+    console.log(`[AudioReading] Polly success: ${buffer.byteLength} bytes`);
+    return buffer;
+  } catch (err) {
+    clearTimeout(timeout);
+    if (err.name === 'AbortError') {
+      throw new Error('Polly request timeout');
+    }
+    throw err;
+  }
 }
 
 // ============================================================
-// SSML builder
+// Provider 2: Google Translate TTS (fallback)
+// GET https://translate.google.com/translate_tts?ie=UTF-8&q=TEXT&tl=zh-CN&client=tw-ob
+// Returns: MP3 audio (no auth, ~200 char limit per request)
 // ============================================================
 
-function buildSSML(text, voiceName, rate, pitch) {
-  const lang = voiceName.split('-').slice(0, 2).join('-');
+async function synthesizeViaGoogleTranslate(text, lang) {
+  // Split text into ≤190 char chunks (Google limit is ~200)
+  const chunks = [];
+  let i = 0;
+  while (i < text.length) {
+    // Try to split at sentence boundary near 190 chars
+    let end = Math.min(i + 190, text.length);
+    if (end < text.length) {
+      const boundary = text.lastIndexOf(/[。！？!?；;…\.\n]/, end);
+      if (boundary > i + 50) end = boundary + 1;
+    }
+    chunks.push(text.slice(i, end));
+    i = end;
+  }
 
-  const escaped = text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+  console.log(`[AudioReading] Google Translate: lang=${lang}, ${chunks.length} chunk(s), text="${text.substring(0, 50)}..."`);
 
-  return `<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" xmlns:mstts="http://www.w3.org/2001/mstts" xml:lang="${lang}">
-  <voice name="${voiceName}">
-    <prosody rate="${rate || '1.0'}" pitch="${pitch || '1.0'}">
-      ${escaped}
-    </prosody>
-  </voice>
-</speak>`;
+  const audioBuffers = [];
+
+  for (const chunk of chunks) {
+    const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=${encodeURIComponent(lang)}&client=tw-ob`;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        signal: controller.signal
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) {
+        throw new Error(`Google Translate HTTP ${response.status}`);
+      }
+
+      const buffer = await response.arrayBuffer();
+      if (buffer && buffer.byteLength > 0) {
+        audioBuffers.push(buffer);
+      }
+    } catch (err) {
+      clearTimeout(timeout);
+      throw err;
+    }
+  }
+
+  if (!audioBuffers.length) {
+    throw new Error('Google Translate returned no audio data');
+  }
+
+  // Merge audio buffers
+  if (audioBuffers.length === 1) {
+    console.log(`[AudioReading] Google Translate success: ${audioBuffers[0].byteLength} bytes`);
+    return audioBuffers[0];
+  }
+
+  const totalLength = audioBuffers.reduce((acc, buf) => acc + buf.byteLength, 0);
+  const merged = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const buf of audioBuffers) {
+    merged.set(new Uint8Array(buf), offset);
+    offset += buf.byteLength;
+  }
+
+  console.log(`[AudioReading] Google Translate success: ${totalLength} bytes (${audioBuffers.length} chunks merged)`);
+  return merged.buffer;
 }
 
 // ============================================================
@@ -81,144 +233,12 @@ function buildSSML(text, voiceName, rate, pitch) {
 function arrayBufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
   let binary = '';
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i]);
+  const chunkSize = 8192;
+  for (let i = 0; i < bytes.byteLength; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode.apply(null, Array.from(chunk));
   }
   return btoa(binary);
-}
-
-// ============================================================
-// HTTP POST synthesis (attempt first — simpler)
-// ============================================================
-
-async function synthesizeViaHTTP(ssml, voiceName) {
-  const secMsGec = await generateSecMSGEC();
-  const lang = voiceName.split('-').slice(0, 2).join('-');
-
-  // Try with Sec-MS-GEC in URL and headers
-  const url = `${HTTP_URL}&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}&ConnectionId=${generateConnectionId()}`;
-
-  console.log(`[AudioReading] HTTP POST: ${url.substring(0, 80)}...`);
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/ssml+xml',
-        'X-Microsoft-OutputFormat': 'audio-24khz-48kbitrate-mono-mp3',
-        'User-Agent': `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROMIUM_MAJOR_VERSION}.0.0.0 Safari/537.36 Edg/${CHROMIUM_MAJOR_VERSION}.0.0.0`,
-        'Accept-Language': `${lang},en-US;q=0.9`,
-        'Sec-MS-GEC': secMsGec,
-        'Sec-MS-GEC-Version': SEC_MS_GEC_VERSION
-      },
-      body: ssml,
-      signal: controller.signal
-    });
-
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      console.error(`[AudioReading] HTTP ${response.status}: ${errorText.substring(0, 300)}`);
-      throw new Error(`HTTP ${response.status}${errorText ? ': ' + errorText.substring(0, 100) : ''}`);
-    }
-
-    const buffer = await response.arrayBuffer();
-    if (!buffer || buffer.byteLength < 100) {
-      throw new Error('Edge TTS returned insufficient audio data');
-    }
-
-    console.log(`[AudioReading] HTTP success: ${buffer.byteLength} bytes`);
-    return buffer;
-
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-// ============================================================
-// WebSocket synthesis (fallback if HTTP fails)
-// ============================================================
-
-async function synthesizeViaWebSocket(ssml, voiceName) {
-  const secMsGec = await generateSecMSGEC();
-  const connectionId = generateConnectionId();
-
-  const wsUrl = `${WSS_URL}&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}&ConnectionId=${connectionId}`;
-
-  console.log(`[AudioReading] WebSocket: ${wsUrl.substring(0, 80)}...`);
-
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(wsUrl);
-    const audioChunks = [];
-    let configSent = false;
-    let timer = setTimeout(() => {
-      ws.close();
-      reject(new Error('WebSocket timeout'));
-    }, 25000);
-
-    ws.onopen = () => {
-      console.log('[AudioReading] WebSocket connected');
-
-      // Send speech.config
-      const requestId = crypto.randomUUID().replace(/-/g, '');
-      const configMsg = `X-RequestId:${requestId}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":false,"wordBoundaryEnabled":false},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}`;
-      ws.send(configMsg);
-      configSent = true;
-
-      // Send SSML
-      const ssmlMsg = `X-RequestId:${requestId}\r\nContent-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n${ssml}`;
-      ws.send(ssmlMsg);
-    };
-
-    ws.onmessage = (event) => {
-      // Edge TTS sends: text frame (JSON headers) then binary frame (audio)
-      if (typeof event.data === 'string') {
-        // Text frame — could be turn.start, turn.end, or error
-        if (event.data.includes('Path:turn.end')) {
-          // Synthesis complete
-          clearTimeout(timer);
-          ws.close();
-        } else if (event.data.includes('Path:turn.start')) {
-          // Synthesis started
-        }
-        // Ignore other text frames (metadata)
-      } else if (event.data instanceof ArrayBuffer || event.data instanceof Blob) {
-        // Audio data
-        audioChunks.push(event.data);
-      }
-    };
-
-    ws.onerror = (err) => {
-      clearTimeout(timer);
-      console.error('[AudioReading] WebSocket error:', err);
-      reject(new Error('Edge TTS WebSocket connection failed'));
-    };
-
-    ws.onclose = () => {
-      clearTimeout(timer);
-      if (audioChunks.length > 0) {
-        // Merge audio chunks
-        const totalLength = audioChunks.reduce((acc, chunk) => {
-          return acc + (chunk instanceof ArrayBuffer ? chunk.byteLength : chunk.size);
-        }, 0);
-        const merged = new Uint8Array(totalLength);
-        let offset = 0;
-        for (const chunk of audioChunks) {
-          const data = chunk instanceof ArrayBuffer ? new Uint8Array(chunk) : new Uint8Array(chunk);
-          merged.set(data, offset);
-          offset += data.byteLength;
-        }
-        console.log(`[AudioReading] WebSocket success: ${totalLength} bytes`);
-        resolve(merged.buffer);
-      } else {
-        reject(new Error('Edge TTS returned no audio data'));
-      }
-    };
-  });
 }
 
 // ============================================================
@@ -226,18 +246,31 @@ async function synthesizeViaWebSocket(ssml, voiceName) {
 // ============================================================
 
 async function synthesize(text, voiceName, rate, pitch) {
-  const voice = voiceName || 'zh-CN-XiaoxiaoNeural';
-  const ssml = buildSSML(text, voice, rate, pitch);
+  const resolved = resolveVoice(voiceName);
+  const lang = (voiceName || 'zh-CN').split('-').slice(0, 2).join('-');
 
-  console.log(`[AudioReading] Synthesizing: "${text.substring(0, 40)}..." voice=${voice}`);
+  console.log(`[AudioReading] Synthesizing: provider=${resolved.provider}, voice=${resolved.voice}`);
 
-  // Try HTTP POST first
+  // Primary: Polly (StreamElements)
+  if (resolved.provider === 'polly') {
+    try {
+      return await synthesizeViaPolly(text, resolved.voice);
+    } catch (pollyErr) {
+      console.warn(`[AudioReading] Polly failed: ${pollyErr.message}, falling back to Google Translate...`);
+      // Fallback: Google Translate
+      try {
+        return await synthesizeViaGoogleTranslate(text, lang);
+      } catch (gtErr) {
+        throw new Error(`语音合成失败：${gtErr.message}`);
+      }
+    }
+  }
+
+  // Direct Google Translate
   try {
-    return await synthesizeViaHTTP(ssml, voice);
-  } catch (httpErr) {
-    console.warn(`[AudioReading] HTTP failed: ${httpErr.message}, trying WebSocket...`);
-    // Fallback to WebSocket
-    return await synthesizeViaWebSocket(ssml, voice);
+    return await synthesizeViaGoogleTranslate(text, resolved.voice);
+  } catch (gtErr) {
+    throw new Error(`语音合成失败：${gtErr.message}`);
   }
 }
 
@@ -254,11 +287,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: true, audioData: arrayBufferToBase64(buffer) });
       })
       .catch((err) => {
-        console.error('[AudioReading] Fatal:', err.message);
-        sendResponse({ ok: false, message: `语音合成失败：${err.message}` });
+        console.error('[AudioReading] Synthesis failed:', err.message);
+        sendResponse({ ok: false, message: err.message });
       });
 
-    return true;
+    return true; // async response
   }
 
   return false;
