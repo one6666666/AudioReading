@@ -719,6 +719,11 @@ function wireRange(input, label) {
 // Actions
 // ============================================================
 
+function getReadSource() {
+  const checked = document.querySelector('input[name="readSource"]:checked');
+  return checked ? checked.value : 'page';
+}
+
 async function onRead() {
   try {
     const tab = await getCurrentTab();
@@ -726,6 +731,7 @@ async function onRead() {
 
     const voiceData = voiceOptionMap.get(selectedVoiceId);
     const source = voiceData?.source || currentTab;
+    const readSource = getReadSource();
 
     const payload = {
       voiceSource: source,
@@ -743,13 +749,15 @@ async function onRead() {
       cloudVoiceId: voiceData?.id || ''
     };
 
+    const messageType = readSource === 'selection' ? 'READ_SELECTION' : 'READ_PAGE';
     const result = await sendMessage(tab, {
-      type: 'READ_PAGE',
+      type: messageType,
       payload
     });
 
     if (result?.ok) {
-      setStatus(`开始朗读，共 ${result.length} 个字符`);
+      const label = readSource === 'selection' ? '选中文字' : '全文';
+      setStatus(`开始朗读${label}，共 ${result.length} 个字符`);
     } else {
       setStatus(result?.message || '朗读失败', true);
     }

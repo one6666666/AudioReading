@@ -440,6 +440,29 @@ select {
   outline: none;
 }
 
+/* ---- Read Source Selection ---- */
+.read-source-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 6px;
+  padding: 6px 0;
+}
+
+.read-source-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.read-source-label input[type="radio"] {
+  accent-color: var(--primary);
+  margin: 0;
+}
+
 /* ---- Action Buttons ---- */
 .actions {
   display: grid;

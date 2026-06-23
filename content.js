@@ -518,6 +518,28 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     return true;
   }
 
+  // ---- READ_SELECTION ----
+  if (message.type === 'READ_SELECTION') {
+    const selection = window.getSelection();
+    const text = (selection && !selection.isCollapsed)
+      ? selection.toString().trim()
+      : '';
+
+    if (!text) {
+      sendResponse({ ok: false, message: '未检测到选中文字，请先在页面中选中要朗读的内容' });
+      return true;
+    }
+
+    stopAll();
+    currentSettings = message.payload;
+    currentQueue = splitTextBySentence(text);
+    paused = false;
+    speakQueue(message.payload);
+
+    sendResponse({ ok: true, length: text.length });
+    return true;
+  }
+
   // ---- TOGGLE_PAUSE ----
   if (message.type === 'TOGGLE_PAUSE') {
     if (!speaking) {
