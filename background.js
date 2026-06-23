@@ -67,6 +67,34 @@ const POLLY_VOICES = new Set([
   'Naja', 'Mads', 'Liv', 'Gwyneth', 'Zeina',
 ]);
 
+// Map Polly voice names → language codes (for Google Translate fallback)
+const POLLY_VOICE_TO_LANG = {
+  'Zhiyu': 'zh-CN',
+  'Joanna': 'en-US', 'Matthew': 'en-US', 'Joey': 'en-US', 'Kendra': 'en-US',
+  'Ivy': 'en-US', 'Kimberly': 'en-US', 'Salli': 'en-US', 'Justin': 'en-US',
+  'Amy': 'en-GB', 'Emma': 'en-GB', 'Brian': 'en-GB',
+  'Nicole': 'en-AU', 'Russell': 'en-AU',
+  'Raveena': 'en-IN', 'Aditi': 'en-IN',
+  'Mizuki': 'ja-JP', 'Takumi': 'ja-JP',
+  'Seoyeon': 'ko-KR',
+  'Lea': 'fr-FR', 'Celine': 'fr-FR', 'Mathieu': 'fr-FR',
+  'Vicki': 'de-DE', 'Marlene': 'de-DE', 'Hans': 'de-DE',
+  'Lucia': 'es-ES', 'Conchita': 'es-ES', 'Enrique': 'es-ES',
+  'Mia': 'es-MX', 'Miguel': 'es-US', 'Penelope': 'es-US',
+  'Vitoria': 'pt-BR', 'Camila': 'pt-BR', 'Ricardo': 'pt-BR',
+  'Ines': 'pt-PT', 'Cristiano': 'pt-PT',
+  'Carla': 'it-IT', 'Bianca': 'it-IT', 'Giorgio': 'it-IT',
+  'Tatyana': 'ru-RU', 'Maxim': 'ru-RU',
+  'Lotte': 'nl-NL', 'Ruben': 'nl-NL',
+  'Ewa': 'pl-PL', 'Jacek': 'pl-PL',
+  'Filiz': 'tr-TR',
+  'Astrid': 'sv-SE',
+  'Naja': 'da-DK', 'Mads': 'da-DK',
+  'Liv': 'nb-NO',
+  'Gwyneth': 'cy-GB',
+  'Zeina': 'ar-SA',
+};
+
 function resolveVoice(voiceName) {
   const voice = voiceName || 'Zhiyu';
 
@@ -124,7 +152,9 @@ async function synthesizeViaPolly(text, voice) {
   try {
     const response = await fetch(url, {
       method: 'GET',
-      signal: controller.signal
+      signal: controller.signal,
+      referrer: 'https://streamelements.com/',
+      referrerPolicy: 'no-referrer-when-downgrade'
     });
 
     clearTimeout(timeout);
@@ -165,8 +195,12 @@ async function synthesizeViaGoogleTranslate(text, lang) {
     // Try to split at sentence boundary near 190 chars
     let end = Math.min(i + 190, text.length);
     if (end < text.length) {
-      const boundary = text.lastIndexOf(/[。！？!?；;…\.\n]/, end);
-      if (boundary > i + 50) end = boundary + 1;
+      // Find last sentence boundary in range (i+50, end)
+      const segment = text.slice(i, end);
+      const match = segment.match(/.*[。！？!?；;…\.\n]/);
+      if (match && match[0].length > 50) {
+        end = i + match[0].length;
+      }
     }
     chunks.push(text.slice(i, end));
     i = end;
@@ -247,7 +281,9 @@ function arrayBufferToBase64(buffer) {
 
 async function synthesize(text, voiceName, rate, pitch) {
   const resolved = resolveVoice(voiceName);
-  const lang = (voiceName || 'zh-CN').split('-').slice(0, 2).join('-');
+  // Get proper language code: use POLLY_VOICE_TO_LANG mapping for Google Translate fallback
+  const lang = POLLY_VOICE_TO_LANG[resolved.voice] ||
+               (voiceName || 'zh-CN').split('-').slice(0, 2).join('-');
 
   console.log(`[AudioReading] Synthesizing: provider=${resolved.provider}, voice=${resolved.voice}`);
 
