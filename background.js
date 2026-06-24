@@ -1,263 +1,373 @@
 // ============================================================
 // AudioReading Background Service Worker
-// Multi-provider TTS: StreamElements (Amazon Polly) + Google Translate
-// Free, no authentication required, works in Chrome MV3
+// Edge TTS WebSocket protocol (free neural voices, no API key)
+// Fallback: Web Speech API via content script
 // ============================================================
 
 // ============================================================
-// Voice resolution: map voice IDs to provider + voice name
+// Constants — Edge TTS protocol (matches edge-tts Python lib v7.2.8)
 // ============================================================
+const TRUSTED_CLIENT_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
+const WIN_EPOCH = 11644473600; // seconds from 1601-01-01 to 1970-01-01
+const CHROMIUM_MAJOR = '143';
+const CHROMIUM_FULL = '143.0.3650.75';
+const WSS_URL = `wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=${TRUSTED_CLIENT_TOKEN}`;
+const SEC_MS_GEC_VERSION = `1-${CHROMIUM_FULL}`;
 
-// Backward compatibility: map old Edge TTS voice IDs → Polly voices
-const EDGE_TO_POLLY = {
-  // Chinese
-  'zh-CN-XiaoxiaoNeural': 'Zhiyu', 'zh-CN-XiaoyiNeural': 'Zhiyu',
-  'zh-CN-YunxiNeural': 'Zhiyu', 'zh-CN-YunyangNeural': 'Zhiyu',
-  'zh-CN-XiaohanNeural': 'Zhiyu', 'zh-CN-XiaomoNeural': 'Zhiyu',
-  'zh-CN-XiaoruiNeural': 'Zhiyu', 'zh-CN-XiaoxuanNeural': 'Zhiyu',
-  'zh-CN-YunjianNeural': 'Zhiyu', 'zh-CN-YunxiaNeural': 'Zhiyu',
-  'zh-CN-YunyeNeural': 'Zhiyu', 'zh-CN-liaoning-XiaobeiNeural': 'Zhiyu',
-  // English US
-  'en-US-JennyNeural': 'Joanna', 'en-US-AriaNeural': 'Salli',
-  'en-US-GuyNeural': 'Matthew', 'en-US-DavisNeural': 'Joey',
-  'en-US-AmberNeural': 'Kendra', 'en-US-AnaNeural': 'Ivy',
-  'en-US-BrandonNeural': 'Justin', 'en-US-ChristopherNeural': 'Matthew',
-  'en-US-EricNeural': 'Joey', 'en-US-MichelleNeural': 'Kendra',
-  'en-US-RogerNeural': 'Matthew', 'en-US-SteffanNeural': 'Joey',
-  // English UK
-  'en-GB-LibbyNeural': 'Amy', 'en-GB-RyanNeural': 'Brian',
-  'en-GB-SoniaNeural': 'Emma', 'en-GB-MaisieNeural': 'Amy',
-  // English AU
-  'en-AU-NatashaNeural': 'Nicole', 'en-AU-WilliamNeural': 'Russell',
+// Voice name → Edge voice ID mapping (only verified working voices)
+const VOICE_NAME_TO_EDGE_ID = {
+  // Chinese Mandarin
+  'Zhiyu':       'zh-CN-YunxiNeural',
+  'zh-CN-YunxiNeural':        'zh-CN-YunxiNeural',
+  'zh-CN-YunjianNeural':      'zh-CN-YunjianNeural',
+  'zh-CN-XiaoxiaoNeural':     'zh-CN-XiaoxiaoNeural',
+  'zh-CN-XiaoyiNeural':       'zh-CN-XiaoyiNeural',
+  'zh-CN-YunyangNeural':      'zh-CN-YunyangNeural',
+  'zh-CN-YunxiaNeural':       'zh-CN-YunxiaNeural',
+  'zh-CN-liaoning-XiaobeiNeural': 'zh-CN-liaoning-XiaobeiNeural',
+  'zh-CN-shaanxi-XiaoniNeural':   'zh-CN-shaanxi-XiaoniNeural',
+  // Chinese Cantonese
+  'zh-HK-HiuGaaiNeural':      'zh-HK-HiuGaaiNeural',
+  'zh-HK-HiuMaanNeural':      'zh-HK-HiuMaanNeural',
+  'zh-HK-WanLungNeural':      'zh-HK-WanLungNeural',
+  // Chinese Taiwanese
+  'zh-TW-HsiaoChenNeural':    'zh-TW-HsiaoChenNeural',
+  'zh-TW-HsiaoYuNeural':      'zh-TW-HsiaoYuNeural',
+  'zh-TW-YunJheNeural':       'zh-TW-YunJheNeural',
+  // English
+  'Joanna':    'en-US-JennyNeural',
+  'Matthew':   'en-US-GuyNeural',
+  'Joey':      'en-US-EricNeural',
+  'Kendra':    'en-US-AriaNeural',
+  'Ivy':       'en-US-AnaNeural',
+  'Kimberly':  'en-US-AmberNeural',
+  'Salli':     'en-US-AriaNeural',
+  'Justin':    'en-US-ChristopherNeural',
+  'Amy':       'en-GB-LibbyNeural',
+  'Emma':      'en-GB-SoniaNeural',
+  'Brian':     'en-GB-RyanNeural',
+  'Nicole':    'en-AU-NatashaNeural',
+  'Russell':   'en-AU-WilliamNeural',
+  'Raveena':   'en-IN-NeerjaNeural',
+  'Aditi':     'en-IN-NeerjaNeural',
   // Japanese
-  'ja-JP-NanamiNeural': 'Mizuki', 'ja-JP-KeitaNeural': 'Takumi',
-  'ja-JP-AoiNeural': 'Mizuki', 'ja-JP-DaichiNeural': 'Takumi',
-  'ja-JP-MayuNeural': 'Mizuki',
+  'Mizuki':    'ja-JP-NanamiNeural',
+  'Takumi':    'ja-JP-KeitaNeural',
   // Korean
-  'ko-KR-SunHiNeural': 'Seoyeon', 'ko-KR-InJoonNeural': 'Seoyeon',
-  'ko-KR-JiMinNeural': 'Seoyeon',
+  'Seoyeon':   'ko-KR-SunHiNeural',
   // French
-  'fr-FR-DeniseNeural': 'Lea', 'fr-FR-HenriNeural': 'Mathieu',
+  'Lea':       'fr-FR-DeniseNeural',
+  'Celine':    'fr-FR-DeniseNeural',
+  'Mathieu':   'fr-FR-HenriNeural',
   // German
-  'de-DE-KatjaNeural': 'Vicki', 'de-DE-ConradNeural': 'Hans',
+  'Vicki':     'de-DE-KatjaNeural',
+  'Marlene':   'de-DE-KatjaNeural',
+  'Hans':      'de-DE-ConradNeural',
   // Spanish
-  'es-ES-ElviraNeural': 'Lucia', 'es-ES-AlvaroNeural': 'Enrique',
-  'es-MX-DaliaNeural': 'Mia', 'es-MX-JorgeNeural': 'Miguel',
+  'Lucia':     'es-ES-ElviraNeural',
+  'Conchita':  'es-ES-ElviraNeural',
+  'Enrique':   'es-ES-AlvaroNeural',
+  'Mia':       'es-MX-DaliaNeural',
+  'Miguel':    'es-MX-JorgeNeural',
+  'Penelope':  'es-MX-DaliaNeural',
   // Portuguese
-  'pt-BR-FranciscaNeural': 'Vitoria', 'pt-BR-AntonioNeural': 'Ricardo',
+  'Vitoria':   'pt-BR-FranciscaNeural',
+  'Camila':    'pt-BR-FranciscaNeural',
+  'Ricardo':   'pt-BR-AntonioNeural',
+  'Ines':      'pt-PT-FernandaNeural',
+  'Cristiano': 'pt-PT-DuarteNeural',
   // Italian
-  'it-IT-ElsaNeural': 'Carla', 'it-IT-IsabellaNeural': 'Bianca',
+  'Carla':     'it-IT-ElsaNeural',
+  'Bianca':    'it-IT-IsabellaNeural',
+  'Giorgio':   'it-IT-DiegoNeural',
   // Russian
-  'ru-RU-SvetlanaNeural': 'Tatyana', 'ru-RU-DmitryNeural': 'Maxim',
-  // Arabic
-  'ar-SA-ZariyahNeural': 'Zeina', 'ar-SA-HamedNeural': 'Zeina',
+  'Tatyana':   'ru-RU-SvetlanaNeural',
+  'Maxim':     'ru-RU-DmitryNeural',
+  // Others
+  'Lotte':     'nl-NL-FennaNeural',
+  'Ruben':     'nl-NL-MaartenNeural',
+  'Ewa':       'pl-PL-AgnieszkaNeural',
+  'Jacek':     'pl-PL-MarekNeural',
+  'Filiz':     'tr-TR-EmelNeural',
+  'Astrid':    'sv-SE-SofieNeural',
+  'Naja':      'da-DK-ChristelNeural',
+  'Mads':      'da-DK-JeppeNeural',
+  'Liv':       'nb-NO-PernilleNeural',
+  'Gwyneth':   'cy-GB-NiaNeural',
+  'Zeina':     'ar-SA-ZariyahNeural',
 };
 
-// Known Polly voices (for direct matching)
-const POLLY_VOICES = new Set([
-  'Zhiyu', 'Mizuki', 'Takumi', 'Seoyeon',
-  'Joanna', 'Matthew', 'Joey', 'Kendra', 'Ivy', 'Kimberly', 'Salli', 'Justin',
-  'Amy', 'Emma', 'Brian', 'Nicole', 'Russell', 'Aditi', 'Raveena',
-  'Lea', 'Celine', 'Mathieu', 'Vicki', 'Marlene', 'Hans',
-  'Lucia', 'Conchita', 'Enrique', 'Mia', 'Miguel', 'Penelope',
-  'Vitoria', 'Ricardo', 'Camila', 'Ines', 'Cristiano',
-  'Carla', 'Bianca', 'Giorgio',
-  'Tatyana', 'Maxim',
-  'Lotte', 'Ruben', 'Ewa', 'Jacek', 'Filiz', 'Astrid',
-  'Naja', 'Mads', 'Liv', 'Gwyneth', 'Zeina',
-]);
+// ============================================================
+// Crypto helpers
+// ============================================================
 
-// Map Polly voice names → language codes (for Google Translate fallback)
-const POLLY_VOICE_TO_LANG = {
-  'Zhiyu': 'zh-CN',
-  'Joanna': 'en-US', 'Matthew': 'en-US', 'Joey': 'en-US', 'Kendra': 'en-US',
-  'Ivy': 'en-US', 'Kimberly': 'en-US', 'Salli': 'en-US', 'Justin': 'en-US',
-  'Amy': 'en-GB', 'Emma': 'en-GB', 'Brian': 'en-GB',
-  'Nicole': 'en-AU', 'Russell': 'en-AU',
-  'Raveena': 'en-IN', 'Aditi': 'en-IN',
-  'Mizuki': 'ja-JP', 'Takumi': 'ja-JP',
-  'Seoyeon': 'ko-KR',
-  'Lea': 'fr-FR', 'Celine': 'fr-FR', 'Mathieu': 'fr-FR',
-  'Vicki': 'de-DE', 'Marlene': 'de-DE', 'Hans': 'de-DE',
-  'Lucia': 'es-ES', 'Conchita': 'es-ES', 'Enrique': 'es-ES',
-  'Mia': 'es-MX', 'Miguel': 'es-US', 'Penelope': 'es-US',
-  'Vitoria': 'pt-BR', 'Camila': 'pt-BR', 'Ricardo': 'pt-BR',
-  'Ines': 'pt-PT', 'Cristiano': 'pt-PT',
-  'Carla': 'it-IT', 'Bianca': 'it-IT', 'Giorgio': 'it-IT',
-  'Tatyana': 'ru-RU', 'Maxim': 'ru-RU',
-  'Lotte': 'nl-NL', 'Ruben': 'nl-NL',
-  'Ewa': 'pl-PL', 'Jacek': 'pl-PL',
-  'Filiz': 'tr-TR',
-  'Astrid': 'sv-SE',
-  'Naja': 'da-DK', 'Mads': 'da-DK',
-  'Liv': 'nb-NO',
-  'Gwyneth': 'cy-GB',
-  'Zeina': 'ar-SA',
-};
+async function sha256(message) {
+  const msgBuffer = new TextEncoder().encode(message);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
 
-function resolveVoice(voiceName) {
-  const voice = voiceName || 'Zhiyu';
+function uuidHex() {
+  return crypto.randomUUID().replace(/-/g, '');
+}
 
-  // 1. Direct Polly voice match (e.g., "Zhiyu", "Joanna")
-  if (POLLY_VOICES.has(voice)) {
-    return { provider: 'polly', voice };
-  }
-
-  // 2. Backward compat: old Edge voice ID → Polly
-  if (EDGE_TO_POLLY[voice]) {
-    return { provider: 'polly', voice: EDGE_TO_POLLY[voice] };
-  }
-
-  // 3. Language-based fallback
-  const langPrefix = voice.split('-')[0];
-  const langFull = voice.split('-').slice(0, 2).join('-');
-
-  const langToPolly = {
-    'zh': 'Zhiyu', 'ja': 'Mizuki', 'ko': 'Seoyeon',
-    'en-US': 'Joanna', 'en-GB': 'Brian', 'en-AU': 'Nicole', 'en-IN': 'Raveena', 'en': 'Joanna',
-    'fr': 'Lea', 'de': 'Vicki',
-    'es-ES': 'Lucia', 'es-MX': 'Mia', 'es': 'Lucia',
-    'pt-BR': 'Vitoria', 'pt-PT': 'Ines', 'pt': 'Vitoria',
-    'it': 'Carla', 'ru': 'Tatyana',
-    'nl': 'Lotte', 'pl': 'Ewa', 'tr': 'Filiz',
-    'sv': 'Astrid', 'da': 'Naja', 'nb': 'Liv', 'cy': 'Gwyneth',
-    'ar': 'Zeina',
-  };
-
-  if (langToPolly[langFull]) {
-    return { provider: 'polly', voice: langToPolly[langFull] };
-  }
-  if (langToPolly[langPrefix]) {
-    return { provider: 'polly', voice: langToPolly[langPrefix] };
-  }
-
-  // 4. Ultimate fallback: Google Translate with language code
-  return { provider: 'gtts', voice: langPrefix || 'zh-CN' };
+function dateToString() {
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${days[d.getUTCDay()]} ${months[d.getUTCMonth()]} ${pad(d.getUTCDate())} ${d.getUTCFullYear()} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} GMT+0000 (Coordinated Universal Time)`;
 }
 
 // ============================================================
-// Provider 1: StreamElements (Amazon Polly neural voices)
-// GET https://api.streamelements.com/kappa/v2/speech?voice=Zhiyu&text=你好
-// Returns: MP3 audio (no auth, ~550 char limit)
+// Sec-MS-GEC token generation (matches edge-tts Python lib exactly)
 // ============================================================
 
-async function synthesizeViaPolly(text, voice) {
-  const url = `https://api.streamelements.com/kappa/v2/speech?voice=${encodeURIComponent(voice)}&text=${encodeURIComponent(text)}`;
+async function generateSecMSGEC() {
+  // 1. Current Unix timestamp (seconds, UTC)
+  const nowSec = Math.floor(Date.now() / 1000);
 
-  console.log(`[AudioReading] Polly request: voice=${voice}, text="${text.substring(0, 50)}..."`);
+  // 2. Convert to Windows file time epoch (1601-01-01)
+  let ticks = nowSec + WIN_EPOCH;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
+  // 3. Round down to nearest 5 minutes (300 seconds)
+  ticks -= ticks % 300;
 
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      signal: controller.signal,
-      referrer: 'https://streamelements.com/',
-      referrerPolicy: 'no-referrer-when-downgrade'
-    });
+  // 4. Convert to 100-nanosecond intervals (× 10^7)
+  ticks = Math.floor(ticks * 1e7);
 
-    clearTimeout(timeout);
+  // 5. Concatenate ticks + TRUSTED_CLIENT_TOKEN
+  const strToHash = `${ticks}${TRUSTED_CLIENT_TOKEN}`;
 
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      console.error(`[AudioReading] Polly HTTP ${response.status}: ${errText.substring(0, 200)}`);
-      throw new Error(`Polly HTTP ${response.status}`);
-    }
-
-    const buffer = await response.arrayBuffer();
-    if (!buffer || buffer.byteLength < 100) {
-      throw new Error('Polly returned insufficient audio data');
-    }
-
-    console.log(`[AudioReading] Polly success: ${buffer.byteLength} bytes`);
-    return buffer;
-  } catch (err) {
-    clearTimeout(timeout);
-    if (err.name === 'AbortError') {
-      throw new Error('Polly request timeout');
-    }
-    throw err;
-  }
+  // 6. SHA256 → uppercase hex
+  const hash = await sha256(strToHash);
+  return hash.toUpperCase();
 }
 
 // ============================================================
-// Provider 2: Google Translate TTS (fallback)
-// GET https://translate.google.com/translate_tts?ie=UTF-8&q=TEXT&tl=zh-CN&client=tw-ob
-// Returns: MP3 audio (no auth, ~200 char limit per request)
+// Build Edge TTS WebSocket messages
 // ============================================================
 
-async function synthesizeViaGoogleTranslate(text, lang) {
-  // Split text into ≤190 char chunks (Google limit is ~200)
-  const chunks = [];
-  let i = 0;
-  while (i < text.length) {
-    // Try to split at sentence boundary near 190 chars
-    let end = Math.min(i + 190, text.length);
-    if (end < text.length) {
-      // Find last sentence boundary in range (i+50, end)
-      const segment = text.slice(i, end);
-      const match = segment.match(/.*[。！？!?；;…\.\n]/);
-      if (match && match[0].length > 50) {
-        end = i + match[0].length;
+function buildSpeechConfig() {
+  const ts = dateToString();
+  const json = JSON.stringify({
+    context: {
+      synthesis: {
+        audio: {
+          metadataoptions: {
+            sentenceBoundaryEnabled: "false",
+            wordBoundaryEnabled: "true"
+          },
+          outputFormat: "audio-24khz-48kbitrate-mono-mp3"
+        }
       }
     }
-    chunks.push(text.slice(i, end));
-    i = end;
+  });
+  return `X-Timestamp:${ts}\r\nContent-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n${json}\r\n`;
+}
+
+function buildSSML(text, voiceId, rate, pitch) {
+  const rid = uuidHex();
+  const ts = dateToString();
+
+  // Convert "zh-CN-YunxiNeural" → "Microsoft Server Speech Text to Speech Voice (zh-CN, YunxiNeural)"
+  const parts = voiceId.split('-');
+  const lang = parts.slice(0, 2).join('-');
+  const name = parts.slice(2).join('-');
+  const msVoice = `Microsoft Server Speech Text to Speech Voice (${lang}, ${name})`;
+
+  // Rate: "+0%", "-20%", etc.
+  const rateSign = rate >= 1 ? '+' : '';
+  const rateVal = Math.round((rate - 1) * 100);
+  const rateStr = `${rateSign}${rateVal}%`;
+
+  // Pitch: "+0Hz", "-10Hz", etc.
+  const pitchSign = pitch >= 1 ? '+' : '';
+  const pitchVal = Math.round((pitch - 1) * 50);
+  const pitchStr = `${pitchSign}${pitchVal}Hz`;
+
+  // XML-escape text
+  const esc = String(text)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+
+  const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='${msVoice}'><prosody pitch='${pitchStr}' rate='${rateStr}' volume='+0%'>${esc}</prosody></voice></speak>`;
+
+  return `X-RequestId:${rid}\r\nContent-Type:application/ssml+xml\r\nX-Timestamp:${ts}Z\r\nPath:ssml\r\n\r\n${ssml}`;
+}
+
+// ============================================================
+// Parse binary WebSocket message from Edge TTS
+// Format: [2-byte BE headerLen][headers \r\n-separated][\r\n][MP3 audio]
+// ============================================================
+
+function parseBinaryMessage(data) {
+  if (!(data instanceof ArrayBuffer)) {
+    return null;
   }
 
-  console.log(`[AudioReading] Google Translate: lang=${lang}, ${chunks.length} chunk(s), text="${text.substring(0, 50)}..."`);
+  const bytes = new Uint8Array(data);
+  if (bytes.length < 2) {
+    return null;
+  }
 
-  const audioBuffers = [];
+  // First 2 bytes = header length (big-endian)
+  const headerLen = (bytes[0] << 8) | bytes[1];
+  if (headerLen + 2 > bytes.length) {
+    return null;
+  }
 
-  for (const chunk of chunks) {
-    const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=${encodeURIComponent(lang)}&client=tw-ob`;
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        signal: controller.signal
-      });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        throw new Error(`Google Translate HTTP ${response.status}`);
-      }
-
-      const buffer = await response.arrayBuffer();
-      if (buffer && buffer.byteLength > 0) {
-        audioBuffers.push(buffer);
-      }
-    } catch (err) {
-      clearTimeout(timeout);
-      throw err;
+  // Parse headers
+  const headerBytes = bytes.slice(2, 2 + headerLen);
+  const headerStr = new TextDecoder('ascii').decode(headerBytes);
+  const headers = {};
+  for (const line of headerStr.split('\r\n')) {
+    const ci = line.indexOf(':');
+    if (ci > 0) {
+      headers[line.slice(0, ci).trim()] = line.slice(ci + 1).trim();
     }
   }
 
-  if (!audioBuffers.length) {
-    throw new Error('Google Translate returned no audio data');
+  // Audio data starts after headers + \r\n separator
+  const audioOffset = 2 + headerLen + 2;
+  if (audioOffset >= bytes.length) {
+    return { headers, audioData: new ArrayBuffer(0) };
   }
 
-  // Merge audio buffers
-  if (audioBuffers.length === 1) {
-    console.log(`[AudioReading] Google Translate success: ${audioBuffers[0].byteLength} bytes`);
-    return audioBuffers[0];
-  }
+  const audioData = bytes.slice(audioOffset).buffer;
+  return { headers, audioData };
+}
 
-  const totalLength = audioBuffers.reduce((acc, buf) => acc + buf.byteLength, 0);
-  const merged = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const buf of audioBuffers) {
-    merged.set(new Uint8Array(buf), offset);
-    offset += buf.byteLength;
-  }
+// ============================================================
+// Synthesize via Edge TTS WebSocket
+// ============================================================
 
-  console.log(`[AudioReading] Google Translate success: ${totalLength} bytes (${audioBuffers.length} chunks merged)`);
-  return merged.buffer;
+async function synthesizeViaEdgeTTS(text, voiceName, rate, pitch) {
+  const voiceId = VOICE_NAME_TO_EDGE_ID[voiceName] || voiceName;
+
+  // If voiceName looks like a language code (e.g., "zh-CN") rather than a voice name,
+  // use default Chinese voice
+  const effectiveVoiceId = voiceId.includes('Neural') ? voiceId : 'zh-CN-YunxiNeural';
+
+  console.log(`[AudioReading] Edge TTS: voice=${effectiveVoiceId}, text="${String(text).substring(0, 50)}..."`);
+
+  const secMsGec = await generateSecMSGEC();
+  const connId = uuidHex();
+  const fullUrl = `${WSS_URL}&ConnectionId=${connId}&Sec-MS-GEC=${secMsGec}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}`;
+
+  console.log(`[AudioReading] Edge TTS connecting to wss://speech.platform.bing.com/...`);
+
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(fullUrl);
+    const audioChunks = [];
+    let resolved = false;
+
+    const finish = (ok, result) => {
+      if (resolved) return;
+      resolved = true;
+      try { ws.close(); } catch (_) {}
+      if (ok) resolve(result);
+      else reject(new Error(result));
+    };
+
+    ws.onopen = () => {
+      console.log('[AudioReading] Edge TTS WebSocket connected');
+      // Send speech.config
+      ws.send(buildSpeechConfig());
+      // Send SSML
+      ws.send(buildSSML(text, effectiveVoiceId, rate, pitch));
+      console.log('[AudioReading] Edge TTS sent config + SSML');
+    };
+
+    ws.onmessage = (event) => {
+      if (typeof event.data === 'string') {
+        // Text message — check for turn.end
+        const hEnd = event.data.indexOf('\r\n\r\n');
+        if (hEnd >= 0) {
+          const hLines = event.data.slice(0, hEnd).split('\r\n');
+          const h = {};
+          for (const l of hLines) {
+            const ci = l.indexOf(':');
+            if (ci > 0) h[l.slice(0, ci).trim()] = l.slice(ci + 1).trim();
+          }
+          if (h['Path'] === 'turn.end') {
+            console.log('[AudioReading] Edge TTS turn.end received');
+            ws.close(1000, 'Done');
+          }
+        }
+      } else if (event.data instanceof ArrayBuffer || event.data instanceof Blob) {
+        // Binary message — extract audio
+        let buf;
+        if (event.data instanceof Blob) {
+          // Blob: read as ArrayBuffer (rare in WS, but handle)
+          const reader = new FileReader();
+          reader.onload = () => {
+            processBinary(reader.result);
+          };
+          reader.readAsArrayBuffer(event.data);
+          return;
+        } else {
+          buf = event.data;
+        }
+        processBinary(buf);
+      }
+
+      function processBinary(buf) {
+        const parsed = parseBinaryMessage(buf);
+        if (!parsed) {
+          console.warn('[AudioReading] Edge TTS: failed to parse binary message');
+          return;
+        }
+
+        if (parsed.headers['Path'] === 'audio') {
+          const contentType = parsed.headers['Content-Type'] || '';
+          if (contentType === 'audio/mpeg' || contentType === '') {
+            if (parsed.audioData.byteLength > 0) {
+              audioChunks.push(parsed.audioData);
+            }
+          }
+        }
+      }
+    };
+
+    ws.onerror = (event) => {
+      console.error('[AudioReading] Edge TTS WebSocket error', event);
+      // Don't reject immediately — wait for onclose
+    };
+
+    ws.onclose = (event) => {
+      console.log(`[AudioReading] Edge TTS WebSocket closed: code=${event.code}, reason=${event.reason || 'none'}`);
+
+      if (resolved) return;
+
+      if (audioChunks.length > 0) {
+        // Merge audio chunks
+        const totalLen = audioChunks.reduce((s, c) => s + c.byteLength, 0);
+        const merged = new Uint8Array(totalLen);
+        let offset = 0;
+        for (const chunk of audioChunks) {
+          merged.set(new Uint8Array(chunk), offset);
+          offset += chunk.byteLength;
+        }
+        console.log(`[AudioReading] Edge TTS SUCCESS: ${totalLen} bytes`);
+        finish(true, merged.buffer);
+      } else if (event.code === 1000 || event.code === 1001) {
+        // Normal closure but no audio — unusual
+        finish(false, 'Edge TTS returned no audio data');
+      } else {
+        finish(false, `Edge TTS connection failed (code=${event.code})`);
+      }
+    };
+
+    // Timeout after 20 seconds
+    setTimeout(() => {
+      finish(false, 'Edge TTS request timeout (20s)');
+    }, 20000);
+  });
 }
 
 // ============================================================
@@ -267,47 +377,63 @@ async function synthesizeViaGoogleTranslate(text, lang) {
 function arrayBufferToBase64(buffer) {
   const bytes = new Uint8Array(buffer);
   let binary = '';
-  const chunkSize = 8192;
-  for (let i = 0; i < bytes.byteLength; i += chunkSize) {
-    const chunk = bytes.subarray(i, i + chunkSize);
-    binary += String.fromCharCode.apply(null, Array.from(chunk));
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i]);
   }
   return btoa(binary);
 }
 
 // ============================================================
-// Main synthesis entry point
+// Resolve voice: map user-facing name → Edge voice ID
+// ============================================================
+
+function resolveVoice(voiceName) {
+  // Direct Edge voice ID match (e.g., "zh-CN-YunxiNeural")
+  if (voiceName && voiceName.includes('Neural')) {
+    return { voiceId: voiceName };
+  }
+
+  // Mapped voice name (e.g., "Zhiyu" → "zh-CN-YunxiNeural")
+  if (VOICE_NAME_TO_EDGE_ID[voiceName]) {
+    return { voiceId: VOICE_NAME_TO_EDGE_ID[voiceName] };
+  }
+
+  // Default: Chinese female voice
+  return { voiceId: 'zh-CN-YunxiNeural' };
+}
+
+// ============================================================
+// Main synthesis entry point (with retry for rate limiting)
 // ============================================================
 
 async function synthesize(text, voiceName, rate, pitch) {
   const resolved = resolveVoice(voiceName);
-  // Get proper language code: use POLLY_VOICE_TO_LANG mapping for Google Translate fallback
-  const lang = POLLY_VOICE_TO_LANG[resolved.voice] ||
-               (voiceName || 'zh-CN').split('-').slice(0, 2).join('-');
+  const maxRetries = 3;
+  let lastError = null;
 
-  console.log(`[AudioReading] Synthesizing: provider=${resolved.provider}, voice=${resolved.voice}`);
-
-  // Primary: Polly (StreamElements)
-  if (resolved.provider === 'polly') {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      return await synthesizeViaPolly(text, resolved.voice);
-    } catch (pollyErr) {
-      console.warn(`[AudioReading] Polly failed: ${pollyErr.message}, falling back to Google Translate...`);
-      // Fallback: Google Translate
-      try {
-        return await synthesizeViaGoogleTranslate(text, lang);
-      } catch (gtErr) {
-        throw new Error(`语音合成失败：${gtErr.message}`);
+      const result = await synthesizeViaEdgeTTS(text, resolved.voiceId, rate || 1.0, pitch || 1.0);
+      return result;
+    } catch (err) {
+      lastError = err;
+      const msg = err.message || '';
+      console.warn(`[AudioReading] Attempt ${attempt}/${maxRetries} failed: ${msg}`);
+
+      // Only retry on connection errors (rate limiting)
+      if (msg.includes('connection failed') || msg.includes('timeout') || msg.includes('no audio')) {
+        if (attempt < maxRetries) {
+          const delay = Math.min(1000 * Math.pow(2, attempt - 1), 6000);
+          console.log(`[AudioReading] Retrying in ${delay}ms...`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
       }
+      throw err;
     }
   }
 
-  // Direct Google Translate
-  try {
-    return await synthesizeViaGoogleTranslate(text, resolved.voice);
-  } catch (gtErr) {
-    throw new Error(`语音合成失败：${gtErr.message}`);
-  }
+  throw lastError || new Error('Edge TTS synthesis failed after retries');
 }
 
 // ============================================================
@@ -315,8 +441,8 @@ async function synthesize(text, voiceName, rate, pitch) {
 // ============================================================
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type === 'SYNTHESIZE_EDGE_TTS') {
-    const { text, voiceName, rate, pitch } = message.payload;
+  if (message.type === 'SYNTHESIZE_EDGE_TTS' || message.type === 'SYNTHESIZE_TTS') {
+    const { text, voiceName, rate, pitch } = message.payload || {};
 
     synthesize(text, voiceName, rate, pitch)
       .then((buffer) => {

@@ -398,7 +398,7 @@ async function speakQueueCloudTTS(settings) {
   }
 }
 
-// ---- Voice preview for Edge TTS ----
+// ---- Voice preview for Edge TTS (with Web Speech API fallback) ----
 
 async function previewEdgeVoice(voiceName, sampleText) {
   try {
@@ -406,13 +406,47 @@ async function previewEdgeVoice(voiceName, sampleText) {
     return new Promise((resolve, reject) => {
       playAudioBuffer(
         audioData,
-        () => resolve({ ok: true }),
-        (err) => reject(err || new Error('Preview playback failed'))
+        () => resolve({ ok: true, source: 'edge' }),
+        (err) => {
+          console.warn('Preview playback failed, falling back to Web Speech API:', err);
+          fallbackSpeechSynthesis(sampleText, voiceName).then(resolve).catch(reject);
+        }
       );
     });
   } catch (err) {
-    throw err;
+    console.warn('Edge TTS synthesis failed, falling back to Web Speech API:', err.message);
+    // Fallback to Web Speech API
+    try {
+      return await fallbackSpeechSynthesis(sampleText, voiceName);
+    } catch (err2) {
+      throw err; // Throw original error if fallback also fails
+    }
   }
+}
+
+async function fallbackSpeechSynthesis(text, voiceName) {
+  return new Promise((resolve, reject) => {
+    if (typeof speechSynthesis === 'undefined') {
+      reject(new Error('浏览器不支持语音合成'));
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    // Try to find a matching Chinese voice
+    const voices = speechSynthesis.getVoices();
+    const isChineseText = /[\u4e00-\u9fff]/.test(text);
+    if (isChineseText && voices.length > 0) {
+      const chineseVoice = voices.find(v => v.lang.startsWith('zh'));
+      if (chineseVoice) utterance.voice = chineseVoice;
+    }
+    utterance.rate = 1.0;
+    utterance.pitch = 1.0;
+    utterance.volume = 1.0;
+
+    utterance.onend = () => resolve({ ok: true, source: 'system' });
+    utterance.onerror = (e) => reject(new Error(`系统语音播放失败: ${e.error || 'unknown'}`));
+    speechSynthesis.speak(utterance);
+  });
 }
 
 // ---- Voice list ----
