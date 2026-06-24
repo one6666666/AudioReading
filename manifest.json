@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "网页朗读助手",
   "description": "朗读当前网页文字，支持系统语音和 Edge 自然语音（微软免费神经网络，14种中文+多语言），带语音试听与收藏功能。",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "permissions": ["activeTab", "storage", "scripting"],
   "host_permissions": ["<all_urls>"],
   "action": {

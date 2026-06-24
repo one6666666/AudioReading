@@ -12,7 +12,7 @@
 const WIN_EPOCH = 11644473600; // seconds from Unix epoch to Windows epoch (1601-01-01)
 const TRUSTED_CLIENT_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
 const WSS_URL = 'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=' + TRUSTED_CLIENT_TOKEN;
-const SEC_MS_GEC_VERSION = '1-143.0.3536.0';
+const SEC_MS_GEC_VERSION = '1-143.0.3650.75';
 
 function generateSecMSGEC() {
   // 1. Current Unix timestamp (seconds)
@@ -88,104 +88,87 @@ async function synthViaEdgeTTS(text, voice, rate, pitch) {
 
   console.log(`[AudioReading] Edge TTS: voice=${voice}, text="${text.substring(0, 50)}..."`);
 
-  return new Promise(async (resolve, reject) => {
-    try {
-      const token = await generateSecMSGEC();
-      const connectionId = generateRequestId();
-      const wsUrl = `${WSS_URL}&ConnectionId=${connectionId}&Sec-MS-GEC=${token}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}`;
+  const token = await generateSecMSGEC();
+  const connectionId = generateRequestId();
+  const wsUrl = `${WSS_URL}&ConnectionId=${connectionId}&Sec-MS-GEC=${token}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}`;
 
-      const ws = new WebSocket(wsUrl);
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(wsUrl);
+    ws.binaryType = 'arraybuffer';
 
-      // IMPORTANT: set binaryType to arraybuffer for binary message parsing
-      ws.binaryType = 'arraybuffer';
+    const timestamp = dateToString();
+    const requestId = generateRequestId();
+    const audioChunks = [];
+    let turnEnded = false;
+    let wsError = null;
 
-      const timestamp = dateToString();
-      const requestId = generateRequestId();
-      const audioChunks = [];
-      let turnEnded = false;
-      let hasError = false;
+    ws.onopen = () => {
+      console.log('[AudioReading] Edge TTS WebSocket connected');
 
-      ws.onopen = () => {
-        console.log('[AudioReading] Edge TTS WebSocket connected');
+      // Config message — exact format from edge-tts Python library
+      const configMsg =
+        `X-Timestamp:${timestamp}\r\n` +
+        'Content-Type:application/json; charset=utf-8\r\n' +
+        'Path:speech.config\r\n\r\n' +
+        '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":false,"wordBoundaryEnabled":true},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}';
+      ws.send(configMsg);
 
-        // Send config message
-        const configMsg =
-          `X-Timestamp:${timestamp}\r\n` +
-          'Content-Type:application/json; charset=utf-8\r\n' +
-          'Path:speech.config\r\n\r\n' +
-          '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":false,"wordBoundaryEnabled":true},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}';
+      // SSML message — exact format from edge-tts
+      const ssmlMsg =
+        `X-RequestId:${requestId}\r\n` +
+        'Content-Type:application/ssml+xml\r\n' +
+        `X-Timestamp:${timestamp}Z\r\n` +
+        'Path:ssml\r\n\r\n' +
+        ssml;
+      ws.send(ssmlMsg);
 
-        ws.send(configMsg);
+      console.log('[AudioReading] Edge TTS SSML sent');
+    };
 
-        // Send SSML message
-        const ssmlMsg =
-          `X-RequestId:${requestId}\r\n` +
-          'Content-Type:application/ssml+xml\r\n' +
-          `X-Timestamp:${timestamp}Z\r\n` +
-          'Path:ssml\r\n\r\n' +
-          ssml;
+    ws.onmessage = (event) => {
+      if (typeof event.data === 'string') {
+        if (event.data.includes('Path:turn.end')) {
+          turnEnded = true;
+          ws.close(1000);
+        }
+        // Ignore turn.start, response, audio.metadata
+      } else if (event.data instanceof ArrayBuffer) {
+        // Binary message structure (matches edge-tts Python library):
+        // ┌─────┬──────────┬─────┬──────────────┐
+        // │ 2B  │ headerLen│ 2B  │ MP3 audio    │
+        // │ hLen│ headers  │ CRLF│ (raw)         │
+        // └─────┴──────────┴─────┴──────────────┘
+        try {
+          const data = new Uint8Array(event.data);
+          if (data.length < 4) return;
 
-        ws.send(ssmlMsg);
-        console.log('[AudioReading] Edge TTS SSML sent');
-      };
+          const headerLen = (data[0] << 8) | data[1];
+          const headerEnd = 2 + headerLen;
+          // Only 2-byte CRLF separator (not 4!), matching edge-tts: data[header_length + 2:]
+          const audioStart = headerEnd + 2;
 
-      ws.onmessage = (event) => {
-        if (typeof event.data === 'string') {
-          // Text message — check for turn.end
-          if (event.data.includes('Path:turn.end')) {
-            turnEnded = true;
-            ws.close(1000);
-          }
-          // Ignore turn.start, response, audio.metadata
-        } else if (event.data instanceof ArrayBuffer) {
-          // Binary message: [2 bytes header_len (BE)] [headers\r\n\r\n] [MP3 audio]
-          try {
-            const data = new Uint8Array(event.data);
-            if (data.length < 2) return;
-
-            const headerLen = (data[0] << 8) | data[1];
-            const headerEnd = 2 + headerLen;
-
-            if (headerEnd + 4 > data.length) return; // Not enough data
-
-            // Skip headers + \r\n\r\n separator
-            const audioStart = headerEnd + 4;
+          if (audioStart < data.length) {
             const audioData = data.slice(audioStart);
-
             if (audioData.length > 0) {
               audioChunks.push(audioData);
             }
-          } catch (e) {
-            console.warn('[AudioReading] Binary parse error:', e);
           }
+        } catch (e) {
+          console.warn('[AudioReading] Binary parse error:', e);
         }
-      };
+      }
+    };
 
-      ws.onerror = (err) => {
-        console.error('[AudioReading] WebSocket error');
-        hasError = true;
-        ws.close();
-      };
+    ws.onerror = () => {
+      console.error('[AudioReading] WebSocket error event');
+      wsError = 'WebSocket connection failed';
+    };
 
-      ws.onclose = (event) => {
-        console.log(`[AudioReading] WebSocket closed: code=${event.code}, reason=${event.reason}`);
+    ws.onclose = (event) => {
+      console.log(`[AudioReading] WebSocket closed: code=${event.code} wasClean=${event.wasClean}`);
 
-        if (hasError) {
-          reject(new Error('Edge TTS WebSocket connection failed'));
-          return;
-        }
-
-        if (!turnEnded && audioChunks.length === 0) {
-          reject(new Error('Edge TTS: no audio data received'));
-          return;
-        }
-
-        if (audioChunks.length === 0) {
-          reject(new Error('Edge TTS: no audio data in response'));
-          return;
-        }
-
-        // Merge audio chunks
+      // If we have audio data and turn ended normally, succeed regardless of error
+      if (turnEnded && audioChunks.length > 0) {
         const totalLen = audioChunks.reduce((acc, c) => acc + c.length, 0);
         const merged = new Uint8Array(totalLen);
         let offset = 0;
@@ -193,25 +176,34 @@ async function synthViaEdgeTTS(text, voice, rate, pitch) {
           merged.set(chunk, offset);
           offset += chunk.length;
         }
-
         console.log(`[AudioReading] Edge TTS success: ${totalLen} bytes`);
         resolve(merged.buffer);
-      };
+        return;
+      }
 
-      // Timeout — 25 seconds
-      setTimeout(() => {
-        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-          ws.close();
-          if (!hasError && audioChunks.length === 0) {
-            reject(new Error('Edge TTS request timeout'));
-          }
-        }
-      }, 25000);
+      // Connection-level error
+      if (wsError) {
+        reject(new Error('Edge TTS WebSocket connection failed'));
+        return;
+      }
 
-    } catch (err) {
-      console.error('[AudioReading] Edge TTS setup failed:', err);
-      reject(err);
-    }
+      // Protocol error — unexpected close
+      if (!turnEnded) {
+        reject(new Error('Edge TTS: server closed without turn.end (code=' + event.code + ')'));
+        return;
+      }
+
+      // No audio data
+      reject(new Error('Edge TTS: no audio data received'));
+    };
+
+    // Timeout — 25 seconds
+    setTimeout(() => {
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        reject(new Error('Edge TTS request timeout'));
+        ws.close();
+      }
+    }, 25000);
   });
 }
 
@@ -448,7 +440,29 @@ function arrayBufferToBase64(buffer) {
 async function synthesize(text, voiceName, rate, pitch) {
   const voice = resolveVoice(voiceName);
   console.log(`[AudioReading] Synthesizing: voice=${voice}`);
-  return synthViaEdgeTTS(text, voice, rate, pitch);
+
+  // Retry up to 3 times with exponential backoff for transient failures
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      console.log(`[AudioReading] Attempt ${attempt}/3`);
+      return await synthViaEdgeTTS(text, voice, rate, pitch);
+    } catch (err) {
+      lastError = err;
+      console.warn(`[AudioReading] Attempt ${attempt} failed: ${err.message}`);
+
+      // Only retry on connection-level errors (not on timeout or empty response)
+      if (err.message.includes('timeout') || err.message.includes('no audio')) {
+        throw err;
+      }
+      if (attempt < 3) {
+        // Exponential backoff: 1s, 2s
+        await new Promise(r => setTimeout(r, attempt * 1000));
+      }
+    }
+  }
+
+  throw lastError || new Error('Edge TTS: all retry attempts failed');
 }
 
 // ============================================================
