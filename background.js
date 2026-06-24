@@ -1,7 +1,8 @@
 // ============================================================
 // AudioReading Background Service Worker
-// Multi-provider TTS: StreamElements (Amazon Polly) + Google Translate
+// Multi-provider TTS: StreamElements (Polly/Google WaveNet/Azure) + Google Translate
 // Free, no authentication required, works in Chrome MV3
+// 12 Chinese voices: 1 Polly, 4 Google WaveNet, 7 Azure
 // ============================================================
 
 // ============================================================
@@ -53,8 +54,9 @@ const EDGE_TO_POLLY = {
   'ar-SA-ZariyahNeural': 'Zeina', 'ar-SA-HamedNeural': 'Zeina',
 };
 
-// Known Polly voices (for direct matching)
-const POLLY_VOICES = new Set([
+// Known StreamElements voices (for direct matching — Polly + Google + Azure)
+const STREAMELEMENTS_VOICES = new Set([
+  // Polly voices
   'Zhiyu', 'Mizuki', 'Takumi', 'Seoyeon',
   'Joanna', 'Matthew', 'Joey', 'Kendra', 'Ivy', 'Kimberly', 'Salli', 'Justin',
   'Amy', 'Emma', 'Brian', 'Nicole', 'Russell', 'Aditi', 'Raveena',
@@ -65,10 +67,15 @@ const POLLY_VOICES = new Set([
   'Tatyana', 'Maxim',
   'Lotte', 'Ruben', 'Ewa', 'Jacek', 'Filiz', 'Astrid',
   'Naja', 'Mads', 'Liv', 'Gwyneth', 'Zeina',
+  // Google WaveNet voices (Chinese)
+  'cmn-CN-Wavenet-A', 'cmn-CN-Wavenet-B', 'cmn-CN-Wavenet-C', 'cmn-CN-Wavenet-D',
+  // Azure voices (Chinese)
+  'Huihui', 'Yaoyao', 'Kangkang', 'HanHan', 'Zhiwei', 'Tracy', 'Danny',
 ]);
 
-// Map Polly voice names → language codes (for Google Translate fallback)
-const POLLY_VOICE_TO_LANG = {
+// Map StreamElements voice names → language codes (for Google Translate fallback)
+const STREAMELEMENTS_VOICE_TO_LANG = {
+  // Polly
   'Zhiyu': 'zh-CN',
   'Joanna': 'en-US', 'Matthew': 'en-US', 'Joey': 'en-US', 'Kendra': 'en-US',
   'Ivy': 'en-US', 'Kimberly': 'en-US', 'Salli': 'en-US', 'Justin': 'en-US',
@@ -93,27 +100,41 @@ const POLLY_VOICE_TO_LANG = {
   'Liv': 'nb-NO',
   'Gwyneth': 'cy-GB',
   'Zeina': 'ar-SA',
+  // Google WaveNet (Chinese)
+  'cmn-CN-Wavenet-A': 'zh-CN',
+  'cmn-CN-Wavenet-B': 'zh-CN',
+  'cmn-CN-Wavenet-C': 'zh-CN',
+  'cmn-CN-Wavenet-D': 'zh-CN',
+  // Azure (Chinese)
+  'Huihui': 'zh-CN',
+  'Yaoyao': 'zh-CN',
+  'Kangkang': 'zh-CN',
+  'HanHan': 'zh-TW',
+  'Zhiwei': 'zh-TW',
+  'Tracy': 'zh-HK',
+  'Danny': 'zh-HK',
 };
 
 function resolveVoice(voiceName) {
   const voice = voiceName || 'Zhiyu';
 
-  // 1. Direct Polly voice match (e.g., "Zhiyu", "Joanna")
-  if (POLLY_VOICES.has(voice)) {
-    return { provider: 'polly', voice };
+  // 1. Direct StreamElements voice match (e.g., "Zhiyu", "Huihui", "cmn-CN-Wavenet-A")
+  if (STREAMELEMENTS_VOICES.has(voice)) {
+    return { provider: 'streamelements', voice };
   }
 
-  // 2. Backward compat: old Edge voice ID → Polly
+  // 2. Backward compat: old Edge voice ID → StreamElements
   if (EDGE_TO_POLLY[voice]) {
-    return { provider: 'polly', voice: EDGE_TO_POLLY[voice] };
+    return { provider: 'streamelements', voice: EDGE_TO_POLLY[voice] };
   }
 
-  // 3. Language-based fallback
+  // 3. Language-based fallback → StreamElements
   const langPrefix = voice.split('-')[0];
   const langFull = voice.split('-').slice(0, 2).join('-');
 
-  const langToPolly = {
-    'zh': 'Zhiyu', 'ja': 'Mizuki', 'ko': 'Seoyeon',
+  const langToVoice = {
+    'zh': 'Zhiyu', 'zh-TW': 'HanHan', 'zh-HK': 'Tracy',
+    'ja': 'Mizuki', 'ko': 'Seoyeon',
     'en-US': 'Joanna', 'en-GB': 'Brian', 'en-AU': 'Nicole', 'en-IN': 'Raveena', 'en': 'Joanna',
     'fr': 'Lea', 'de': 'Vicki',
     'es-ES': 'Lucia', 'es-MX': 'Mia', 'es': 'Lucia',
@@ -124,11 +145,11 @@ function resolveVoice(voiceName) {
     'ar': 'Zeina',
   };
 
-  if (langToPolly[langFull]) {
-    return { provider: 'polly', voice: langToPolly[langFull] };
+  if (langToVoice[langFull]) {
+    return { provider: 'streamelements', voice: langToVoice[langFull] };
   }
-  if (langToPolly[langPrefix]) {
-    return { provider: 'polly', voice: langToPolly[langPrefix] };
+  if (langToVoice[langPrefix]) {
+    return { provider: 'streamelements', voice: langToVoice[langPrefix] };
   }
 
   // 4. Ultimate fallback: Google Translate with language code
@@ -136,15 +157,15 @@ function resolveVoice(voiceName) {
 }
 
 // ============================================================
-// Provider 1: StreamElements (Amazon Polly neural voices)
+// Provider 1: StreamElements (Polly + Google WaveNet + Azure voices)
 // GET https://api.streamelements.com/kappa/v2/speech?voice=Zhiyu&text=你好
-// Returns: MP3 audio (no auth, ~550 char limit)
+// Returns: MP3 audio (no auth, ~550 char limit, all 188 voices)
 // ============================================================
 
-async function synthesizeViaPolly(text, voice) {
+async function synthesizeViaStreamElements(text, voice) {
   const url = `https://api.streamelements.com/kappa/v2/speech?voice=${encodeURIComponent(voice)}&text=${encodeURIComponent(text)}`;
 
-  console.log(`[AudioReading] Polly request: voice=${voice}, text="${text.substring(0, 50)}..."`);
+  console.log(`[AudioReading] StreamElements request: voice=${voice}, text="${text.substring(0, 50)}..."`);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20000);
@@ -161,21 +182,21 @@ async function synthesizeViaPolly(text, voice) {
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '');
-      console.error(`[AudioReading] Polly HTTP ${response.status}: ${errText.substring(0, 200)}`);
-      throw new Error(`Polly HTTP ${response.status}`);
+      console.error(`[AudioReading] StreamElements HTTP ${response.status}: ${errText.substring(0, 200)}`);
+      throw new Error(`StreamElements HTTP ${response.status}`);
     }
 
     const buffer = await response.arrayBuffer();
     if (!buffer || buffer.byteLength < 100) {
-      throw new Error('Polly returned insufficient audio data');
+      throw new Error('StreamElements returned insufficient audio data');
     }
 
-    console.log(`[AudioReading] Polly success: ${buffer.byteLength} bytes`);
+    console.log(`[AudioReading] StreamElements success: ${buffer.byteLength} bytes`);
     return buffer;
   } catch (err) {
     clearTimeout(timeout);
     if (err.name === 'AbortError') {
-      throw new Error('Polly request timeout');
+      throw new Error('StreamElements request timeout');
     }
     throw err;
   }
@@ -281,18 +302,18 @@ function arrayBufferToBase64(buffer) {
 
 async function synthesize(text, voiceName, rate, pitch) {
   const resolved = resolveVoice(voiceName);
-  // Get proper language code: use POLLY_VOICE_TO_LANG mapping for Google Translate fallback
-  const lang = POLLY_VOICE_TO_LANG[resolved.voice] ||
+  // Get proper language code: use STREAMELEMENTS_VOICE_TO_LANG mapping for Google Translate fallback
+  const lang = STREAMELEMENTS_VOICE_TO_LANG[resolved.voice] ||
                (voiceName || 'zh-CN').split('-').slice(0, 2).join('-');
 
   console.log(`[AudioReading] Synthesizing: provider=${resolved.provider}, voice=${resolved.voice}`);
 
-  // Primary: Polly (StreamElements)
-  if (resolved.provider === 'polly') {
+  // Primary: StreamElements (Polly/Google/Azure)
+  if (resolved.provider === 'streamelements') {
     try {
-      return await synthesizeViaPolly(text, resolved.voice);
-    } catch (pollyErr) {
-      console.warn(`[AudioReading] Polly failed: ${pollyErr.message}, falling back to Google Translate...`);
+      return await synthesizeViaStreamElements(text, resolved.voice);
+    } catch (SEErr) {
+      console.warn(`[AudioReading] StreamElements failed: ${SEErr.message}, falling back to Google Translate...`);
       // Fallback: Google Translate
       try {
         return await synthesizeViaGoogleTranslate(text, lang);

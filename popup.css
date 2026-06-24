@@ -270,6 +270,16 @@ body {
   color: #1e40af;
 }
 
+.badge-google {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.badge-azure {
+  background: #f3e8ff;
+  color: #6b21a8;
+}
+
 .badge-cloud {
   background: #e0e7ff;
   color: #3730a3;

@@ -37,13 +37,33 @@ let selectedVoiceId = null;
 let isPreviewPlaying = false;
 
 // ============================================================
-// Natural Voice Catalog — Amazon Polly neural voices (via StreamElements)
-// Free, no API key, high-quality neural TTS
+// Natural Voice Catalog — StreamElements (Polly + Google WaveNet + Azure)
+// All voices share the same API: GET /kappa/v2/speech?voice=X&text=Y
+// Free, no API key required, 12 Chinese voices + 50+ languages
 // ============================================================
 
 const EDGE_VOICES = [
-  // ---- 中文 ----
-  { id: 'Zhiyu', name: 'Zhiyu', lang: 'zh-CN', gender: 'female', label: 'Zhiyu（女·自然）', style: 'neural', quality: 'premium' },
+  // ---- 🇨🇳 中文（普通话）Polly ----
+  { id: 'Zhiyu', name: 'Zhiyu', lang: 'zh-CN', gender: 'female', label: 'Zhiyu（女·自然·Polly）', provider: 'polly', quality: 'premium' },
+
+  // ---- 🇨🇳 中文（普通话）Google WaveNet ----
+  { id: 'cmn-CN-Wavenet-A', name: 'Li Na', lang: 'zh-CN', gender: 'female', label: 'Li Na（女·温柔·WaveNet）', provider: 'google', quality: 'premium' },
+  { id: 'cmn-CN-Wavenet-B', name: 'Wang', lang: 'zh-CN', gender: 'male', label: 'Wang（男·稳重·WaveNet）', provider: 'google', quality: 'premium' },
+  { id: 'cmn-CN-Wavenet-C', name: 'Bai', lang: 'zh-CN', gender: 'male', label: 'Bai（男·标准·WaveNet）', provider: 'google', quality: 'premium' },
+  { id: 'cmn-CN-Wavenet-D', name: 'Mingli', lang: 'zh-CN', gender: 'female', label: 'Mingli（女·清晰·WaveNet）', provider: 'google', quality: 'premium' },
+
+  // ---- 🇨🇳 中文（普通话）Azure ----
+  { id: 'Huihui', name: 'Huihui', lang: 'zh-CN', gender: 'female', label: 'Huihui（女·标准·Azure）', provider: 'azure', quality: 'premium' },
+  { id: 'Yaoyao', name: 'Yaoyao', lang: 'zh-CN', gender: 'female', label: 'Yaoyao（女·甜美·Azure）', provider: 'azure', quality: 'premium' },
+  { id: 'Kangkang', name: 'Kangkang', lang: 'zh-CN', gender: 'male', label: 'Kangkang（男·标准·Azure）', provider: 'azure', quality: 'premium' },
+
+  // ---- 🇹🇼 中文（台湾国语）Azure ----
+  { id: 'HanHan', name: 'HanHan', lang: 'zh-TW', gender: 'female', label: 'HanHan（女·台湾腔·Azure）', provider: 'azure', quality: 'premium' },
+  { id: 'Zhiwei', name: 'Zhiwei', lang: 'zh-TW', gender: 'male', label: 'Zhiwei（男·台湾腔·Azure）', provider: 'azure', quality: 'premium' },
+
+  // ---- 🇭🇰 中文（粤语）Azure ----
+  { id: 'Tracy', name: 'Tracy', lang: 'zh-HK', gender: 'female', label: 'Tracy（女·粤语·Azure）', provider: 'azure', quality: 'premium' },
+  { id: 'Danny', name: 'Danny', lang: 'zh-HK', gender: 'male', label: 'Danny（男·粤语·Azure）', provider: 'azure', quality: 'premium' },
 
   // ---- English (US) ----
   { id: 'Joanna', name: 'Joanna', lang: 'en-US', gender: 'female', label: 'Joanna (US·女·神经)', style: 'neural', quality: 'premium' },
@@ -141,7 +161,11 @@ const EDGE_VOICES = [
 function groupEdgeVoicesByLang() {
   const groups = {};
   for (const v of EDGE_VOICES) {
-    const langKey = v.lang.split('-')[0];
+    // Separate Chinese dialects
+    let langKey;
+    if (v.lang === 'zh-TW') langKey = 'zh-TW';
+    else if (v.lang === 'zh-HK') langKey = 'zh-HK';
+    else langKey = v.lang.split('-')[0];
     if (!groups[langKey]) groups[langKey] = [];
     groups[langKey].push(v);
   }
@@ -193,8 +217,17 @@ function getQualityBadge(quality) {
   return '';
 }
 
-function getSourceBadge(source) {
-  if (source === 'edge') return '<span class="badge badge-edge">Polly</span>';
+const PROVIDER_BADGES = {
+  polly: '<span class="badge badge-edge">Polly</span>',
+  google: '<span class="badge badge-edge badge-google">WaveNet</span>',
+  azure: '<span class="badge badge-edge badge-azure">Azure</span>',
+};
+
+function getSourceBadge(source, voiceData) {
+  if (source === 'edge' && voiceData?.provider) {
+    return PROVIDER_BADGES[voiceData.provider] || '<span class="badge badge-edge">自然</span>';
+  }
+  if (source === 'edge') return '<span class="badge badge-edge">自然</span>';
   if (source === 'cloud') return '<span class="badge badge-cloud">Cloud</span>';
   return '<span class="badge badge-system">系统</span>';
 }
@@ -217,7 +250,7 @@ function renderVoiceCard(voiceData, source, isFavorite = false) {
         <span class="voice-card-lang">${langDisplay}</span>
       </div>
       <div class="voice-card-badges">
-        ${getSourceBadge(source)}
+        ${getSourceBadge(source, voiceData)}
         ${voiceData.quality ? getQualityBadge(voiceData.quality) : ''}
       </div>
     </div>
@@ -282,6 +315,9 @@ async function previewVoice(voiceData, source, cardElement) {
 
   const sampleTexts = {
     'zh': '你好，这是一段自然语音预览。天气晴朗，微风徐徐，适合出门散步。',
+    'zh-CN': '你好，这是一段自然语音预览。天气晴朗，微风徐徐，适合出门散步。',
+    'zh-TW': '你好，這是一段台灣國語的自然語音預覽。今天天氣很好，適合出去走走。',
+    'zh-HK': '你好，呢段係粵語嘅自然語音預覽。今日天氣好好，好適合出去行下。',
     'ja': 'こんにちは、これは自然な音声プレビューです。',
     'ko': '안녕하세요, 자연스러운 음성 미리보기입니다.',
     'en': 'Hello, this is a natural voice preview. The weather is lovely today.',
@@ -301,8 +337,10 @@ async function previewVoice(voiceData, source, cardElement) {
     'cy': 'Helo, dymagolwg llais naturiol.'
   };
 
-  const langPrefix = (voiceData.lang || 'zh').split('-')[0];
-  const sampleText = sampleTexts[langPrefix] || sampleTexts['zh'];
+  const lang = (voiceData.lang || 'zh');
+  // For zh-TW / zh-HK, use the full locale code to get the right sample text
+  const langKey = (lang === 'zh-TW' || lang === 'zh-HK') ? lang : lang.split('-')[0];
+  const sampleText = sampleTexts[langKey] || sampleTexts[lang.split('-')[0]] || sampleTexts['zh'];
 
   try {
     if (source === 'edge') {
@@ -507,16 +545,22 @@ function renderEdgeVoices(searchTerm, favIds) {
     return;
   }
 
-  // Group by language
+  // Group by language (with dialect separation)
   const groups = {};
   for (const v of voices) {
-    const langKey = v.lang.split('-')[0];
+    // Group zh-CN/zh-TW/zh-HK separately
+    let langKey;
+    if (v.lang === 'zh-TW') langKey = 'zh-TW';
+    else if (v.lang === 'zh-HK') langKey = 'zh-HK';
+    else langKey = v.lang.split('-')[0];
+
     if (!groups[langKey]) groups[langKey] = [];
     groups[langKey].push(v);
   }
 
   const langNames = {
-    'zh': '中文', 'en': 'English', 'ja': '日本語', 'ko': '한국어',
+    'zh': '中文（普通话）', 'zh-TW': '中文（台湾国语）', 'zh-HK': '中文（粤语）',
+    'en': 'English', 'ja': '日本語', 'ko': '한국어',
     'fr': 'Français', 'de': 'Deutsch', 'es': 'Español',
     'pt': 'Português', 'it': 'Italiano', 'ru': 'Русский', 'ar': 'العربية',
     'nl': 'Nederlands', 'pl': 'Polski', 'tr': 'Türkçe',
@@ -537,7 +581,8 @@ function renderEdgeVoices(searchTerm, favIds) {
         lang: v.lang,
         gender: v.gender,
         quality: v.quality,
-        style: v.style
+        style: v.style,
+        provider: v.provider || 'polly'
       };
       const isFav = favIds.has(`edge:${voiceData.id}`);
       voiceListEl.appendChild(renderVoiceCard(voiceData, 'edge', isFav));
