@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "网页朗读助手",
-  "description": "朗读当前网页文字，支持系统语音、12种中文自然语音（Polly/Google WaveNet/Azure，含普通话/台湾国语/粤语）和云端 TTS，带试听与收藏功能。",
-  "version": "2.1.0",
+  "description": "朗读当前网页文字，支持系统语音和 Edge 自然语音（微软免费神经网络，14种中文+多语言），带语音试听与收藏功能。",
+  "version": "2.2.0",
   "permissions": ["activeTab", "storage", "scripting"],
   "host_permissions": ["<all_urls>"],
   "action": {

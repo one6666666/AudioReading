@@ -1,288 +1,437 @@
 // ============================================================
 // AudioReading Background Service Worker
-// Multi-provider TTS: StreamElements (Polly/Google WaveNet/Azure) + Google Translate
-// Free, no authentication required, works in Chrome MV3
-// 12 Chinese voices: 1 Polly, 4 Google WaveNet, 7 Azure
+// Provider: Microsoft Edge TTS (WebSocket, free, 14 Chinese voices)
+// Protocol: WebSocket wss://speech.platform.bing.com/...
+// Token: Pure client-side SHA256 (no auth required)
 // ============================================================
 
 // ============================================================
-// Voice resolution: map voice IDs to provider + voice name
+// Edge TTS WebSocket Protocol — Sec-MS-GEC token generation
 // ============================================================
 
-// Backward compatibility: map old Edge TTS voice IDs → Polly voices
-const EDGE_TO_POLLY = {
-  // Chinese
-  'zh-CN-XiaoxiaoNeural': 'Zhiyu', 'zh-CN-XiaoyiNeural': 'Zhiyu',
-  'zh-CN-YunxiNeural': 'Zhiyu', 'zh-CN-YunyangNeural': 'Zhiyu',
-  'zh-CN-XiaohanNeural': 'Zhiyu', 'zh-CN-XiaomoNeural': 'Zhiyu',
-  'zh-CN-XiaoruiNeural': 'Zhiyu', 'zh-CN-XiaoxuanNeural': 'Zhiyu',
-  'zh-CN-YunjianNeural': 'Zhiyu', 'zh-CN-YunxiaNeural': 'Zhiyu',
-  'zh-CN-YunyeNeural': 'Zhiyu', 'zh-CN-liaoning-XiaobeiNeural': 'Zhiyu',
-  // English US
-  'en-US-JennyNeural': 'Joanna', 'en-US-AriaNeural': 'Salli',
-  'en-US-GuyNeural': 'Matthew', 'en-US-DavisNeural': 'Joey',
-  'en-US-AmberNeural': 'Kendra', 'en-US-AnaNeural': 'Ivy',
-  'en-US-BrandonNeural': 'Justin', 'en-US-ChristopherNeural': 'Matthew',
-  'en-US-EricNeural': 'Joey', 'en-US-MichelleNeural': 'Kendra',
-  'en-US-RogerNeural': 'Matthew', 'en-US-SteffanNeural': 'Joey',
-  // English UK
-  'en-GB-LibbyNeural': 'Amy', 'en-GB-RyanNeural': 'Brian',
-  'en-GB-SoniaNeural': 'Emma', 'en-GB-MaisieNeural': 'Amy',
-  // English AU
-  'en-AU-NatashaNeural': 'Nicole', 'en-AU-WilliamNeural': 'Russell',
+const WIN_EPOCH = 11644473600; // seconds from Unix epoch to Windows epoch (1601-01-01)
+const TRUSTED_CLIENT_TOKEN = '6A5AA1D4EAFF4E9FB37E23D68491D6F4';
+const WSS_URL = 'wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=' + TRUSTED_CLIENT_TOKEN;
+const SEC_MS_GEC_VERSION = '1-143.0.3536.0';
+
+function generateSecMSGEC() {
+  // 1. Current Unix timestamp (seconds)
+  const unixTime = Math.floor(Date.now() / 1000);
+  // 2. Convert to Windows file time epoch
+  let ticks = unixTime + WIN_EPOCH;
+  // 3. Round down to nearest 5 minutes (300 seconds)
+  ticks -= ticks % 300;
+  // 4. Convert to 100-nanosecond intervals (Windows file time)
+  ticks = Math.floor(ticks * 1e7);
+  // 5. Concatenate with trusted client token
+  const str = ticks.toString() + TRUSTED_CLIENT_TOKEN;
+  // 6. SHA256, uppercase hex
+  return sha256Hex(str);
+}
+
+// Simple SHA256 implementation (works in Service Worker, no external libs needed)
+async function sha256Hex(str) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(str);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+function generateMUID() {
+  const arr = new Uint8Array(16);
+  crypto.getRandomValues(arr);
+  return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+}
+
+function generateRequestId() {
+  return crypto.randomUUID().replace(/-/g, '');
+}
+
+function dateToString() {
+  const d = new Date();
+  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const pad = n => String(n).padStart(2, '0');
+  return `${days[d.getUTCDay()]} ${months[d.getUTCMonth()]} ${pad(d.getUTCDate())} ${d.getUTCFullYear()} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())} GMT+0000 (Coordinated Universal Time)`;
+}
+
+function escapeXml(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function removeBadChars(str) {
+  // Remove control characters except \t \n \r
+  return str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, ' ');
+}
+
+// ============================================================
+// Edge TTS WebSocket — synthesize text → MP3 audio
+// ============================================================
+
+async function synthViaEdgeTTS(text, voice, rate, pitch) {
+  const cleanedText = removeBadChars(text);
+  const escaped = escapeXml(cleanedText);
+
+  // Build SSML
+  const ratePercent = rate ? Math.round((rate - 1) * 100) + '%' : '+0%';
+  const pitchHz = pitch ? Math.round((pitch - 1) * 50) + 'Hz' : '+0Hz';
+  const langMatch = voice.match(/^([a-z]{2}-[A-Z]{2})-/);
+  const ssmlLang = langMatch ? langMatch[1] : 'zh-CN';
+
+  const ssml = `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='https://www.w3.org/2001/mstts' xml:lang='${ssmlLang}'><voice name='${voice}'><prosody pitch='${pitchHz}' rate='${ratePercent}' volume='+0%'>${escaped}</prosody></voice></speak>`;
+
+  console.log(`[AudioReading] Edge TTS: voice=${voice}, text="${text.substring(0, 50)}..."`);
+
+  return new Promise(async (resolve, reject) => {
+    try {
+      const token = await generateSecMSGEC();
+      const connectionId = generateRequestId();
+      const wsUrl = `${WSS_URL}&ConnectionId=${connectionId}&Sec-MS-GEC=${token}&Sec-MS-GEC-Version=${SEC_MS_GEC_VERSION}`;
+
+      const ws = new WebSocket(wsUrl);
+
+      // IMPORTANT: set binaryType to arraybuffer for binary message parsing
+      ws.binaryType = 'arraybuffer';
+
+      const timestamp = dateToString();
+      const requestId = generateRequestId();
+      const audioChunks = [];
+      let turnEnded = false;
+      let hasError = false;
+
+      ws.onopen = () => {
+        console.log('[AudioReading] Edge TTS WebSocket connected');
+
+        // Send config message
+        const configMsg =
+          `X-Timestamp:${timestamp}\r\n` +
+          'Content-Type:application/json; charset=utf-8\r\n' +
+          'Path:speech.config\r\n\r\n' +
+          '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":false,"wordBoundaryEnabled":true},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}';
+
+        ws.send(configMsg);
+
+        // Send SSML message
+        const ssmlMsg =
+          `X-RequestId:${requestId}\r\n` +
+          'Content-Type:application/ssml+xml\r\n' +
+          `X-Timestamp:${timestamp}Z\r\n` +
+          'Path:ssml\r\n\r\n' +
+          ssml;
+
+        ws.send(ssmlMsg);
+        console.log('[AudioReading] Edge TTS SSML sent');
+      };
+
+      ws.onmessage = (event) => {
+        if (typeof event.data === 'string') {
+          // Text message — check for turn.end
+          if (event.data.includes('Path:turn.end')) {
+            turnEnded = true;
+            ws.close(1000);
+          }
+          // Ignore turn.start, response, audio.metadata
+        } else if (event.data instanceof ArrayBuffer) {
+          // Binary message: [2 bytes header_len (BE)] [headers\r\n\r\n] [MP3 audio]
+          try {
+            const data = new Uint8Array(event.data);
+            if (data.length < 2) return;
+
+            const headerLen = (data[0] << 8) | data[1];
+            const headerEnd = 2 + headerLen;
+
+            if (headerEnd + 4 > data.length) return; // Not enough data
+
+            // Skip headers + \r\n\r\n separator
+            const audioStart = headerEnd + 4;
+            const audioData = data.slice(audioStart);
+
+            if (audioData.length > 0) {
+              audioChunks.push(audioData);
+            }
+          } catch (e) {
+            console.warn('[AudioReading] Binary parse error:', e);
+          }
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error('[AudioReading] WebSocket error');
+        hasError = true;
+        ws.close();
+      };
+
+      ws.onclose = (event) => {
+        console.log(`[AudioReading] WebSocket closed: code=${event.code}, reason=${event.reason}`);
+
+        if (hasError) {
+          reject(new Error('Edge TTS WebSocket connection failed'));
+          return;
+        }
+
+        if (!turnEnded && audioChunks.length === 0) {
+          reject(new Error('Edge TTS: no audio data received'));
+          return;
+        }
+
+        if (audioChunks.length === 0) {
+          reject(new Error('Edge TTS: no audio data in response'));
+          return;
+        }
+
+        // Merge audio chunks
+        const totalLen = audioChunks.reduce((acc, c) => acc + c.length, 0);
+        const merged = new Uint8Array(totalLen);
+        let offset = 0;
+        for (const chunk of audioChunks) {
+          merged.set(chunk, offset);
+          offset += chunk.length;
+        }
+
+        console.log(`[AudioReading] Edge TTS success: ${totalLen} bytes`);
+        resolve(merged.buffer);
+      };
+
+      // Timeout — 25 seconds
+      setTimeout(() => {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+          if (!hasError && audioChunks.length === 0) {
+            reject(new Error('Edge TTS request timeout'));
+          }
+        }
+      }, 25000);
+
+    } catch (err) {
+      console.error('[AudioReading] Edge TTS setup failed:', err);
+      reject(err);
+    }
+  });
+}
+
+// ============================================================
+// Voice resolution — map voice names to Edge TTS ShortName
+// ============================================================
+
+// Known Edge TTS voices (for direct matching)
+const EDGE_VOICE_IDS = new Set([
+  // Chinese (Mandarin)
+  'zh-CN-XiaoxiaoNeural', 'zh-CN-XiaoyiNeural', 'zh-CN-YunjianNeural',
+  'zh-CN-YunxiNeural', 'zh-CN-YunxiaNeural', 'zh-CN-YunyangNeural',
+  'zh-CN-liaoning-XiaobeiNeural', 'zh-CN-shaanxi-XiaoniNeural',
+  // Chinese (Cantonese)
+  'zh-HK-HiuGaaiNeural', 'zh-HK-HiuMaanNeural', 'zh-HK-WanLungNeural',
+  // Chinese (Taiwan Mandarin)
+  'zh-TW-HsiaoChenNeural', 'zh-TW-HsiaoYuNeural', 'zh-TW-YunJheNeural',
+  // English
+  'en-US-AriaNeural', 'en-US-JennyNeural', 'en-US-GuyNeural',
+  'en-US-AnaNeural', 'en-US-ChristopherNeural', 'en-US-EricNeural',
+  'en-US-MichelleNeural', 'en-US-RogerNeural', 'en-US-SteffanNeural',
+  'en-GB-SoniaNeural', 'en-GB-RyanNeural', 'en-GB-LibbyNeural',
+  'en-AU-NatashaNeural', 'en-AU-WilliamNeural',
+  'en-IN-NeerjaNeural', 'en-IN-PrabhatNeural',
+  'en-IE-EmilyNeural', 'en-IE-ConnorNeural',
+  'en-NZ-MollyNeural', 'en-NZ-MitchellNeural',
+  'en-ZA-LeahNeural', 'en-ZA-LukeNeural',
+  'en-CA-ClaraNeural', 'en-CA-LiamNeural',
+  'en-PH-RosaNeural', 'en-PH-JamesNeural',
+  'en-SG-LunaNeural', 'en-SG-WayneNeural',
+  'en-HK-SamNeural', 'en-HK-YanNeural',
+  'en-KE-AsiliaNeural', 'en-KE-ChilembaNeural',
+  'en-NG-EzinneNeural', 'en-NG-AbeoNeural',
+  'en-TZ-ImaniNeural', 'en-TZ-ElimuNeural',
   // Japanese
-  'ja-JP-NanamiNeural': 'Mizuki', 'ja-JP-KeitaNeural': 'Takumi',
-  'ja-JP-AoiNeural': 'Mizuki', 'ja-JP-DaichiNeural': 'Takumi',
-  'ja-JP-MayuNeural': 'Mizuki',
+  'ja-JP-NanamiNeural', 'ja-JP-KeitaNeural',
   // Korean
-  'ko-KR-SunHiNeural': 'Seoyeon', 'ko-KR-InJoonNeural': 'Seoyeon',
-  'ko-KR-JiMinNeural': 'Seoyeon',
+  'ko-KR-SunHiNeural', 'ko-KR-InJoonNeural',
   // French
-  'fr-FR-DeniseNeural': 'Lea', 'fr-FR-HenriNeural': 'Mathieu',
+  'fr-FR-DeniseNeural', 'fr-FR-HenriNeural',
+  'fr-CA-SylvieNeural', 'fr-CA-JeanNeural',
+  'fr-CH-ArianeNeural', 'fr-CH-FabriceNeural',
+  'fr-BE-CharlineNeural', 'fr-BE-GerardNeural',
   // German
-  'de-DE-KatjaNeural': 'Vicki', 'de-DE-ConradNeural': 'Hans',
+  'de-DE-KatjaNeural', 'de-DE-ConradNeural',
+  'de-AT-IngridNeural', 'de-AT-JonasNeural',
+  'de-CH-LeniNeural', 'de-CH-JanNeural',
   // Spanish
-  'es-ES-ElviraNeural': 'Lucia', 'es-ES-AlvaroNeural': 'Enrique',
-  'es-MX-DaliaNeural': 'Mia', 'es-MX-JorgeNeural': 'Miguel',
+  'es-ES-ElviraNeural', 'es-ES-AlvaroNeural',
+  'es-MX-DaliaNeural', 'es-MX-JorgeNeural',
+  'es-AR-ElenaNeural', 'es-AR-TomasNeural',
+  'es-CO-SalomeNeural', 'es-CO-GonzaloNeural',
+  'es-CL-CatalinaNeural', 'es-CL-LorenzoNeural',
+  'es-US-PalomaNeural', 'es-US-AlonsoNeural',
   // Portuguese
-  'pt-BR-FranciscaNeural': 'Vitoria', 'pt-BR-AntonioNeural': 'Ricardo',
+  'pt-BR-FranciscaNeural', 'pt-BR-AntonioNeural',
+  'pt-PT-RaquelNeural', 'pt-PT-DuarteNeural',
   // Italian
-  'it-IT-ElsaNeural': 'Carla', 'it-IT-IsabellaNeural': 'Bianca',
+  'it-IT-ElsaNeural', 'it-IT-IsabellaNeural',
   // Russian
-  'ru-RU-SvetlanaNeural': 'Tatyana', 'ru-RU-DmitryNeural': 'Maxim',
+  'ru-RU-SvetlanaNeural', 'ru-RU-DmitryNeural',
+  // Dutch
+  'nl-NL-ColetteNeural', 'nl-NL-FennaNeural',
+  'nl-BE-DenaNeural', 'nl-BE-ArnaudNeural',
+  // Polish
+  'pl-PL-AgnieszkaNeural', 'pl-PL-MarekNeural',
+  // Swedish
+  'sv-SE-SofieNeural', 'sv-SE-MattiasNeural',
+  // Norwegian
+  'nb-NO-PernilleNeural', 'nb-NO-FinnNeural',
+  // Danish
+  'da-DK-ChristelNeural', 'da-DK-JeppeNeural',
+  // Finnish
+  'fi-FI-NooraNeural', 'fi-FI-SelmaNeural',
+  // Turkish
+  'tr-TR-EmelNeural', 'tr-TR-AhmetNeural',
   // Arabic
-  'ar-SA-ZariyahNeural': 'Zeina', 'ar-SA-HamedNeural': 'Zeina',
-};
-
-// Known StreamElements voices (for direct matching — Polly + Google + Azure)
-const STREAMELEMENTS_VOICES = new Set([
-  // Polly voices
-  'Zhiyu', 'Mizuki', 'Takumi', 'Seoyeon',
-  'Joanna', 'Matthew', 'Joey', 'Kendra', 'Ivy', 'Kimberly', 'Salli', 'Justin',
-  'Amy', 'Emma', 'Brian', 'Nicole', 'Russell', 'Aditi', 'Raveena',
-  'Lea', 'Celine', 'Mathieu', 'Vicki', 'Marlene', 'Hans',
-  'Lucia', 'Conchita', 'Enrique', 'Mia', 'Miguel', 'Penelope',
-  'Vitoria', 'Ricardo', 'Camila', 'Ines', 'Cristiano',
-  'Carla', 'Bianca', 'Giorgio',
-  'Tatyana', 'Maxim',
-  'Lotte', 'Ruben', 'Ewa', 'Jacek', 'Filiz', 'Astrid',
-  'Naja', 'Mads', 'Liv', 'Gwyneth', 'Zeina',
-  // Google WaveNet voices (Chinese)
-  'cmn-CN-Wavenet-A', 'cmn-CN-Wavenet-B', 'cmn-CN-Wavenet-C', 'cmn-CN-Wavenet-D',
-  // Azure voices (Chinese)
-  'Huihui', 'Yaoyao', 'Kangkang', 'HanHan', 'Zhiwei', 'Tracy', 'Danny',
+  'ar-SA-ZariyahNeural', 'ar-SA-HamedNeural',
+  'ar-EG-SalmaNeural', 'ar-EG-ShakirNeural',
+  'ar-MA-MounaNeural', 'ar-MA-JamalNeural',
+  // Hindi
+  'hi-IN-SwaraNeural', 'hi-IN-MadhurNeural',
+  // Thai
+  'th-TH-PremwadeeNeural', 'th-TH-NiwatNeural',
+  // Vietnamese
+  'vi-VN-HoaiMyNeural', 'vi-VN-NamMinhNeural',
+  // Indonesian
+  'id-ID-GadisNeural', 'id-ID-ArdiNeural',
+  // Malay
+  'ms-MY-YasminNeural', 'ms-MY-OsmanNeural',
+  // Filipino
+  'fil-PH-BlessicaNeural', 'fil-PH-AngeloNeural',
+  // Other
+  'af-ZA-AdriNeural', 'af-ZA-WillemNeural',
+  'am-ET-MekdesNeural', 'am-ET-AmehaNeural',
+  'az-AZ-BanuNeural', 'az-AZ-BabakNeural',
+  'bg-BG-KalinaNeural', 'bg-BG-BorislavNeural',
+  'bn-BD-NabanitaNeural', 'bn-BD-PradeepNeural',
+  'bn-IN-TanishaaNeural', 'bn-IN-BashkarNeural',
+  'bs-BA-VesnaNeural', 'bs-BA-GoranNeural',
+  'ca-ES-JoanaNeural', 'ca-ES-EnricNeural',
+  'cs-CZ-VlastaNeural', 'cs-CZ-AntoninNeural',
+  'cy-GB-NiaNeural', 'cy-GB-AledNeural',
+  'el-GR-AthinaNeural', 'el-GR-NestorasNeural',
+  'et-EE-AnuNeural', 'et-EE-KertNeural',
+  'eu-ES-AinhoaNeural', 'eu-ES-AnderNeural',
+  'fa-IR-DilaraNeural', 'fa-IR-FaridNeural',
+  'gl-ES-SabelaNeural', 'gl-ES-RoiNeural',
+  'gu-IN-DhwaniNeural', 'gu-IN-NiranjanNeural',
+  'he-IL-HilaNeural', 'he-IL-AvriNeural',
+  'hr-HR-GabrijelaNeural', 'hr-HR-SreckoNeural',
+  'hu-HU-NoemiNeural', 'hu-HU-TamasNeural',
+  'is-IS-GudrunNeural', 'is-IS-GunnarNeural',
+  'jv-ID-SitiNeural', 'jv-ID-DimasNeural',
+  'ka-GE-EkaNeural', 'ka-GE-GiorgiNeural',
+  'kk-KZ-AigulNeural', 'kk-KZ-DauletNeural',
+  'km-KH-SreymomNeural', 'km-KH-PisethNeural',
+  'kn-IN-SapnaNeural', 'kn-IN-GaganNeural',
+  'lo-LA-KeomanyNeural', 'lo-LA-ChanthavongNeural',
+  'lt-LT-OnaNeural', 'lt-LT-LeonasNeural',
+  'lv-LV-EveritaNeural', 'lv-LV-NilsNeural',
+  'mk-MK-MarijaNeural', 'mk-MK-AleksandarNeural',
+  'ml-IN-SobhanaNeural', 'ml-IN-MidhunNeural',
+  'mn-MN-YesuiNeural', 'mn-MN-BataaNeural',
+  'mr-IN-AarohiNeural', 'mr-IN-ManoharNeural',
+  'mt-MT-GraceNeural', 'mt-MT-JosephNeural',
+  'my-MM-NilarNeural', 'my-MM-ThihaNeural',
+  'ne-NP-HemkalaNeural', 'ne-NP-SagarNeural',
+  'ps-AF-LatifaNeural', 'ps-AF-GulNawazNeural',
+  'ro-RO-AlinaNeural', 'ro-RO-EmilNeural',
+  'si-LK-ThiliniNeural', 'si-LK-SameeraNeural',
+  'sk-SK-ViktoriaNeural', 'sk-SK-LukasNeural',
+  'sl-SI-PetraNeural', 'sl-SI-RokNeural',
+  'so-SO-UbaxNeural', 'so-SO-AbdalleNeural',
+  'sq-AL-AnilaNeural', 'sq-AL-IlirNeural',
+  'sr-RS-SophieNeural', 'sr-RS-NicholasNeural',
+  'su-ID-TutiNeural', 'su-ID-JajangNeural',
+  'sw-KE-ZuriNeural', 'sw-KE-RafikiNeural',
+  'ta-IN-PallaviNeural', 'ta-IN-ValluvarNeural',
+  'ta-MY-KaniNeural', 'ta-MY-SuryaNeural',
+  'ta-SG-VenbaNeural', 'ta-SG-AnbuNeural',
+  'ta-LK-SaranyaNeural', 'ta-LK-KumarNeural',
+  'te-IN-ShrutiNeural', 'te-IN-MohanNeural',
+  'uk-UA-PolinaNeural', 'uk-UA-OstapNeural',
+  'ur-IN-GulNeural', 'ur-IN-SalmanNeural',
+  'ur-PK-UzmaNeural', 'ur-PK-AsadNeural',
+  'uz-UZ-MadinaNeural', 'uz-UZ-SardorNeural',
+  'zu-ZA-ThandoNeural', 'zu-ZA-ThembaNeural',
 ]);
 
-// Map StreamElements voice names → language codes (for Google Translate fallback)
-const STREAMELEMENTS_VOICE_TO_LANG = {
-  // Polly
-  'Zhiyu': 'zh-CN',
-  'Joanna': 'en-US', 'Matthew': 'en-US', 'Joey': 'en-US', 'Kendra': 'en-US',
-  'Ivy': 'en-US', 'Kimberly': 'en-US', 'Salli': 'en-US', 'Justin': 'en-US',
-  'Amy': 'en-GB', 'Emma': 'en-GB', 'Brian': 'en-GB',
-  'Nicole': 'en-AU', 'Russell': 'en-AU',
-  'Raveena': 'en-IN', 'Aditi': 'en-IN',
-  'Mizuki': 'ja-JP', 'Takumi': 'ja-JP',
-  'Seoyeon': 'ko-KR',
-  'Lea': 'fr-FR', 'Celine': 'fr-FR', 'Mathieu': 'fr-FR',
-  'Vicki': 'de-DE', 'Marlene': 'de-DE', 'Hans': 'de-DE',
-  'Lucia': 'es-ES', 'Conchita': 'es-ES', 'Enrique': 'es-ES',
-  'Mia': 'es-MX', 'Miguel': 'es-US', 'Penelope': 'es-US',
-  'Vitoria': 'pt-BR', 'Camila': 'pt-BR', 'Ricardo': 'pt-BR',
-  'Ines': 'pt-PT', 'Cristiano': 'pt-PT',
-  'Carla': 'it-IT', 'Bianca': 'it-IT', 'Giorgio': 'it-IT',
-  'Tatyana': 'ru-RU', 'Maxim': 'ru-RU',
-  'Lotte': 'nl-NL', 'Ruben': 'nl-NL',
-  'Ewa': 'pl-PL', 'Jacek': 'pl-PL',
-  'Filiz': 'tr-TR',
-  'Astrid': 'sv-SE',
-  'Naja': 'da-DK', 'Mads': 'da-DK',
-  'Liv': 'nb-NO',
-  'Gwyneth': 'cy-GB',
-  'Zeina': 'ar-SA',
-  // Google WaveNet (Chinese)
-  'cmn-CN-Wavenet-A': 'zh-CN',
-  'cmn-CN-Wavenet-B': 'zh-CN',
-  'cmn-CN-Wavenet-C': 'zh-CN',
-  'cmn-CN-Wavenet-D': 'zh-CN',
-  // Azure (Chinese)
-  'Huihui': 'zh-CN',
-  'Yaoyao': 'zh-CN',
-  'Kangkang': 'zh-CN',
-  'HanHan': 'zh-TW',
-  'Zhiwei': 'zh-TW',
-  'Tracy': 'zh-HK',
-  'Danny': 'zh-HK',
-};
-
 function resolveVoice(voiceName) {
-  const voice = voiceName || 'Zhiyu';
+  const voice = voiceName || 'zh-CN-XiaoxiaoNeural';
 
-  // 1. Direct StreamElements voice match (e.g., "Zhiyu", "Huihui", "cmn-CN-Wavenet-A")
-  if (STREAMELEMENTS_VOICES.has(voice)) {
-    return { provider: 'streamelements', voice };
+  // 1. Direct Edge TTS voice match (e.g., "zh-CN-XiaoxiaoNeural")
+  if (EDGE_VOICE_IDS.has(voice)) {
+    return voice;
   }
 
-  // 2. Backward compat: old Edge voice ID → StreamElements
-  if (EDGE_TO_POLLY[voice]) {
-    return { provider: 'streamelements', voice: EDGE_TO_POLLY[voice] };
-  }
+  // 2. Language-based fallback
+  const parts = voice.split('-');
+  const langPrefix = parts[0];
 
-  // 3. Language-based fallback → StreamElements
-  const langPrefix = voice.split('-')[0];
-  const langFull = voice.split('-').slice(0, 2).join('-');
-
-  const langToVoice = {
-    'zh': 'Zhiyu', 'zh-TW': 'HanHan', 'zh-HK': 'Tracy',
-    'ja': 'Mizuki', 'ko': 'Seoyeon',
-    'en-US': 'Joanna', 'en-GB': 'Brian', 'en-AU': 'Nicole', 'en-IN': 'Raveena', 'en': 'Joanna',
-    'fr': 'Lea', 'de': 'Vicki',
-    'es-ES': 'Lucia', 'es-MX': 'Mia', 'es': 'Lucia',
-    'pt-BR': 'Vitoria', 'pt-PT': 'Ines', 'pt': 'Vitoria',
-    'it': 'Carla', 'ru': 'Tatyana',
-    'nl': 'Lotte', 'pl': 'Ewa', 'tr': 'Filiz',
-    'sv': 'Astrid', 'da': 'Naja', 'nb': 'Liv', 'cy': 'Gwyneth',
-    'ar': 'Zeina',
+  const langFallbacks = {
+    'zh': 'zh-CN-XiaoxiaoNeural',
+    'zh-TW': 'zh-TW-HsiaoChenNeural',
+    'zh-HK': 'zh-HK-HiuGaaiNeural',
+    'ja': 'ja-JP-NanamiNeural',
+    'ko': 'ko-KR-SunHiNeural',
+    'en': 'en-US-AriaNeural',
+    'fr': 'fr-FR-DeniseNeural',
+    'de': 'de-DE-KatjaNeural',
+    'es': 'es-ES-ElviraNeural',
+    'pt': 'pt-BR-FranciscaNeural',
+    'it': 'it-IT-ElsaNeural',
+    'ru': 'ru-RU-SvetlanaNeural',
+    'nl': 'nl-NL-ColetteNeural',
+    'pl': 'pl-PL-AgnieszkaNeural',
+    'sv': 'sv-SE-SofieNeural',
+    'da': 'da-DK-ChristelNeural',
+    'nb': 'nb-NO-PernilleNeural',
+    'fi': 'fi-FI-NooraNeural',
+    'tr': 'tr-TR-EmelNeural',
+    'ar': 'ar-SA-ZariyahNeural',
+    'hi': 'hi-IN-SwaraNeural',
+    'th': 'th-TH-PremwadeeNeural',
+    'vi': 'vi-VN-HoaiMyNeural',
+    'id': 'id-ID-GadisNeural',
+    'ms': 'ms-MY-YasminNeural',
+    'ta': 'ta-IN-PallaviNeural',
+    'te': 'te-IN-ShrutiNeural',
+    'mr': 'mr-IN-AarohiNeural',
+    'bn': 'bn-IN-TanishaaNeural',
+    'gu': 'gu-IN-DhwaniNeural',
+    'kn': 'kn-IN-SapnaNeural',
+    'ml': 'ml-IN-SobhanaNeural',
+    'ur': 'ur-IN-GulNeural',
+    'uk': 'uk-UA-PolinaNeural',
+    'cs': 'cs-CZ-VlastaNeural',
+    'sk': 'sk-SK-ViktoriaNeural',
+    'hu': 'hu-HU-NoemiNeural',
+    'ro': 'ro-RO-AlinaNeural',
+    'bg': 'bg-BG-KalinaNeural',
+    'el': 'el-GR-AthinaNeural',
+    'he': 'he-IL-HilaNeural',
+    'fa': 'fa-IR-DilaraNeural',
+    'sw': 'sw-KE-ZuriNeural',
+    'cy': 'cy-GB-NiaNeural',
+    'ca': 'ca-ES-JoanaNeural',
   };
 
-  if (langToVoice[langFull]) {
-    return { provider: 'streamelements', voice: langToVoice[langFull] };
-  }
-  if (langToVoice[langPrefix]) {
-    return { provider: 'streamelements', voice: langToVoice[langPrefix] };
-  }
+  const langFull = parts.slice(0, 2).join('-');
+  if (langFallbacks[langFull]) return langFallbacks[langFull];
+  if (langFallbacks[langPrefix]) return langFallbacks[langPrefix];
 
-  // 4. Ultimate fallback: Google Translate with language code
-  return { provider: 'gtts', voice: langPrefix || 'zh-CN' };
+  // Ultimate fallback
+  return 'en-US-AriaNeural';
 }
 
 // ============================================================
-// Provider 1: StreamElements (Polly + Google WaveNet + Azure voices)
-// GET https://api.streamelements.com/kappa/v2/speech?voice=Zhiyu&text=你好
-// Returns: MP3 audio (no auth, ~550 char limit, all 188 voices)
-// ============================================================
-
-async function synthesizeViaStreamElements(text, voice) {
-  const url = `https://api.streamelements.com/kappa/v2/speech?voice=${encodeURIComponent(voice)}&text=${encodeURIComponent(text)}`;
-
-  console.log(`[AudioReading] StreamElements request: voice=${voice}, text="${text.substring(0, 50)}..."`);
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20000);
-
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      signal: controller.signal,
-      referrer: 'https://streamelements.com/',
-      referrerPolicy: 'no-referrer-when-downgrade'
-    });
-
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      console.error(`[AudioReading] StreamElements HTTP ${response.status}: ${errText.substring(0, 200)}`);
-      throw new Error(`StreamElements HTTP ${response.status}`);
-    }
-
-    const buffer = await response.arrayBuffer();
-    if (!buffer || buffer.byteLength < 100) {
-      throw new Error('StreamElements returned insufficient audio data');
-    }
-
-    console.log(`[AudioReading] StreamElements success: ${buffer.byteLength} bytes`);
-    return buffer;
-  } catch (err) {
-    clearTimeout(timeout);
-    if (err.name === 'AbortError') {
-      throw new Error('StreamElements request timeout');
-    }
-    throw err;
-  }
-}
-
-// ============================================================
-// Provider 2: Google Translate TTS (fallback)
-// GET https://translate.google.com/translate_tts?ie=UTF-8&q=TEXT&tl=zh-CN&client=tw-ob
-// Returns: MP3 audio (no auth, ~200 char limit per request)
-// ============================================================
-
-async function synthesizeViaGoogleTranslate(text, lang) {
-  // Split text into ≤190 char chunks (Google limit is ~200)
-  const chunks = [];
-  let i = 0;
-  while (i < text.length) {
-    // Try to split at sentence boundary near 190 chars
-    let end = Math.min(i + 190, text.length);
-    if (end < text.length) {
-      // Find last sentence boundary in range (i+50, end)
-      const segment = text.slice(i, end);
-      const match = segment.match(/.*[。！？!?；;…\.\n]/);
-      if (match && match[0].length > 50) {
-        end = i + match[0].length;
-      }
-    }
-    chunks.push(text.slice(i, end));
-    i = end;
-  }
-
-  console.log(`[AudioReading] Google Translate: lang=${lang}, ${chunks.length} chunk(s), text="${text.substring(0, 50)}..."`);
-
-  const audioBuffers = [];
-
-  for (const chunk of chunks) {
-    const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(chunk)}&tl=${encodeURIComponent(lang)}&client=tw-ob`;
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        signal: controller.signal
-      });
-
-      clearTimeout(timeout);
-
-      if (!response.ok) {
-        throw new Error(`Google Translate HTTP ${response.status}`);
-      }
-
-      const buffer = await response.arrayBuffer();
-      if (buffer && buffer.byteLength > 0) {
-        audioBuffers.push(buffer);
-      }
-    } catch (err) {
-      clearTimeout(timeout);
-      throw err;
-    }
-  }
-
-  if (!audioBuffers.length) {
-    throw new Error('Google Translate returned no audio data');
-  }
-
-  // Merge audio buffers
-  if (audioBuffers.length === 1) {
-    console.log(`[AudioReading] Google Translate success: ${audioBuffers[0].byteLength} bytes`);
-    return audioBuffers[0];
-  }
-
-  const totalLength = audioBuffers.reduce((acc, buf) => acc + buf.byteLength, 0);
-  const merged = new Uint8Array(totalLength);
-  let offset = 0;
-  for (const buf of audioBuffers) {
-    merged.set(new Uint8Array(buf), offset);
-    offset += buf.byteLength;
-  }
-
-  console.log(`[AudioReading] Google Translate success: ${totalLength} bytes (${audioBuffers.length} chunks merged)`);
-  return merged.buffer;
-}
-
-// ============================================================
-// Base64 encoding
+// Speech synthesis (main entry point)
 // ============================================================
 
 function arrayBufferToBase64(buffer) {
@@ -296,39 +445,10 @@ function arrayBufferToBase64(buffer) {
   return btoa(binary);
 }
 
-// ============================================================
-// Main synthesis entry point
-// ============================================================
-
 async function synthesize(text, voiceName, rate, pitch) {
-  const resolved = resolveVoice(voiceName);
-  // Get proper language code: use STREAMELEMENTS_VOICE_TO_LANG mapping for Google Translate fallback
-  const lang = STREAMELEMENTS_VOICE_TO_LANG[resolved.voice] ||
-               (voiceName || 'zh-CN').split('-').slice(0, 2).join('-');
-
-  console.log(`[AudioReading] Synthesizing: provider=${resolved.provider}, voice=${resolved.voice}`);
-
-  // Primary: StreamElements (Polly/Google/Azure)
-  if (resolved.provider === 'streamelements') {
-    try {
-      return await synthesizeViaStreamElements(text, resolved.voice);
-    } catch (SEErr) {
-      console.warn(`[AudioReading] StreamElements failed: ${SEErr.message}, falling back to Google Translate...`);
-      // Fallback: Google Translate
-      try {
-        return await synthesizeViaGoogleTranslate(text, lang);
-      } catch (gtErr) {
-        throw new Error(`语音合成失败：${gtErr.message}`);
-      }
-    }
-  }
-
-  // Direct Google Translate
-  try {
-    return await synthesizeViaGoogleTranslate(text, resolved.voice);
-  } catch (gtErr) {
-    throw new Error(`语音合成失败：${gtErr.message}`);
-  }
+  const voice = resolveVoice(voiceName);
+  console.log(`[AudioReading] Synthesizing: voice=${voice}`);
+  return synthViaEdgeTTS(text, voice, rate, pitch);
 }
 
 // ============================================================
@@ -336,8 +456,15 @@ async function synthesize(text, voiceName, rate, pitch) {
 // ============================================================
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type === 'SYNTHESIZE_EDGE_TTS') {
-    const { text, voiceName, rate, pitch } = message.payload;
+  if (message.type === 'SYNTHESIZE_EDGE_TTS' || message.type === 'PREVIEW_EDGE_VOICE') {
+    const payload = message.payload || {};
+    const text = payload.text || payload.sampleText || '';
+    const voiceName = payload.voiceName || payload.edgeVoiceName || 'zh-CN-XiaoxiaoNeural';
+    const rate = payload.rate || 1;
+    const pitch = payload.pitch || 1;
+
+    // Normalize: PREVIEW_EDGE_VOICE uses {voiceName, sampleText}
+    // SYNTHESIZE_EDGE_TTS may use either format
 
     synthesize(text, voiceName, rate, pitch)
       .then((buffer) => {
