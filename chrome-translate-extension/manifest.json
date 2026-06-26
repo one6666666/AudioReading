@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "网页翻译助手",
+  "description": "翻译当前网页主要内容，支持多语言切换。",
+  "version": "1.0.0",
+  "permissions": [
+    "activeTab",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://translate.googleapis.com/*"
+  ],
+  "action": {
+    "default_title": "网页翻译助手",
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
